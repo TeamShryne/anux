@@ -13,13 +13,8 @@ buildscript {
     }
 }
 
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven("https://jitpack.io")
-    }
-}
+// NOTE: repositories are declared centrally in settings.gradle.kts
+// (RepositoriesMode.FAIL_ON_PROJECT_REPOS), so no allprojects block here.
 
 tasks.register("clean", Delete::class) {
     delete(rootProject.layout.buildDirectory)
