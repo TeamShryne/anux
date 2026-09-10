@@ -1,5 +1,7 @@
-apply(plugin = "com.android.library")
-apply(plugin = "org.jetbrains.kotlin.android")
+plugins {
+    id("com.android.library") version "8.13.2"
+    id("org.jetbrains.kotlin.android") version "2.0.21"
+}
 
 android {
     namespace = "com.teamshryne.anux.distro"
