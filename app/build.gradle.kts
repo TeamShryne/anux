@@ -43,6 +43,7 @@ android {
 
 dependencies {
     implementation(project(":distro"))
+    implementation("com.squareup.okhttp3:okhttp:4.12.0") // exposed by distro.DockerRegistry API
     implementation(project(":terminal-view"))
     // terminal-emulator comes transitively via terminal-view (api dependency).
 
