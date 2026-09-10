@@ -5,7 +5,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.attribute.PosixFilePermissions
 
 data class ContainerInfo(
     val alias: String,
@@ -123,13 +122,11 @@ class DistroInstaller(
     }
 
     private fun chmod1777(dir: File) {
-        try {
-            Files.setPosixPermissions(dir.toPath(), PosixFilePermissions.fromString("rwxrwxrwt"))
-        } catch (_: Exception) {
-            dir.setWritable(true, false)
-            dir.setReadable(true, false)
-            dir.setExecutable(true, false)
-        }
+        // Best-effort world rwx (java.io only; avoids NIO POSIX edge cases).
+        // The sticky bit is irrelevant inside the proot container.
+        runCatching { dir.setReadable(true, false) }
+        runCatching { dir.setWritable(true, false) }
+        runCatching { dir.setExecutable(true, false) }
     }
 
     companion object {
