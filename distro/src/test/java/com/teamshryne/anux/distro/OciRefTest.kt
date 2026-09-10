@@ -4,6 +4,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 class OciRefTest {
     @get:Rule
@@ -49,11 +50,23 @@ class OciRefTest {
     }
 
     @Test
-    fun `isInstalled detects rootfs`() {
+    fun `isInstalled requires manifest`() {
         val filesDir = tmp.root
         assertFalse(OciRef.isInstalled(filesDir, "ubuntu"))
+        // Partial rootfs from a killed install (no manifest) is NOT installed.
         OciRef.rootfsDir(filesDir, "ubuntu").resolve("usr/bin").mkdirs()
+        assertFalse(OciRef.isInstalled(filesDir, "ubuntu"))
+        File(filesDir, "containers/ubuntu/manifest.json").writeText("{}")
         assertTrue(OciRef.isInstalled(filesDir, "ubuntu"))
+    }
+
+    @Test
+    fun `staging dir never counts as installed`() {
+        val filesDir = tmp.root
+        File(filesDir, "containers/broken.part/rootfs/bin").mkdirs()
+        File(filesDir, "containers/broken.part/manifest.json").writeText("{}")
+        assertFalse(OciRef.isInstalled(filesDir, "broken"))
+        assertFalse(OciRef.isInstalled(filesDir, "broken.part"))
     }
 
     @Test

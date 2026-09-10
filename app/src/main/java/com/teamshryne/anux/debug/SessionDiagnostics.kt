@@ -21,6 +21,12 @@ object SessionDiagnostics {
     fun run(filesDir: File, alias: String, abiLabel: String?): List<CheckResult> {
         val out = mutableListOf<CheckResult>()
         out += CheckResult("device ABI", true, abiLabel ?: "unknown")
+        val freeMb = runCatching { filesDir.usableSpace / 1024 / 1024 }.getOrDefault(-1)
+        out += CheckResult(
+            "storage free",
+            freeMb < 0 || freeMb > 500,
+            if (freeMb < 0) "unknown" else "${freeMb}MB free (full images need ~500MB+)",
+        )
 
         val proot = File(filesDir, "usr/bin/proot")
         out += CheckResult(

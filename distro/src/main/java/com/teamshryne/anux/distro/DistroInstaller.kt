@@ -42,10 +42,15 @@ class DistroInstaller(
         val name = alias ?: OciRef.localName(imageRef)
         requireName(name)
         val containerDir = File(filesDir, "containers/$name")
+        // Staging dir: a killed process leaves partial output here, which —
+        // unlike the final dir — is never treated as installed.
+        val stagingDir = File(filesDir, "containers/$name.part")
         if (OciRef.isInstalled(filesDir, name)) {
             throw IllegalStateException("container '$name' is already installed")
         }
-        // Clean any failed previous attempt.
+        // Clean any failed previous attempt (staging from this version, or a
+        // partial final dir left by older versions that wrote in place).
+        if (stagingDir.exists()) stagingDir.deleteRecursively()
         if (containerDir.exists()) containerDir.deleteRecursively()
 
         try {
@@ -53,7 +58,7 @@ class DistroInstaller(
             val image = registry.resolveImage(imageRef, arch)
 
             val layerCache = File(cacheDir, "oci_layers").apply { mkdirs() }
-            val rootfs = File(containerDir, "rootfs").apply { mkdirs() }
+            val rootfs = File(stagingDir, "rootfs").apply { mkdirs() }
             image.layers.forEachIndexed { i, blob ->
                 onProgress?.invoke(InstallProgress("downloading", i, image.layers.size))
                 val layerFile = registry.downloadBlob(image.canonicalRef, blob.digest, layerCache) { done, total ->
@@ -64,17 +69,22 @@ class DistroInstaller(
             }
 
             onProgress?.invoke(InstallProgress("configuring"))
-            writeManifest(containerDir, imageRef, image, arch)
+            writeManifest(stagingDir, imageRef, image, arch)
             fixupRootfs(rootfs)
-            File(containerDir, "shm").apply {
+            File(stagingDir, "shm").apply {
                 mkdirs()
                 chmod1777(this)
             }
 
+            // Atomic publish: only a fully-written tree ever becomes the container.
+            // Same parent dir => same filesystem => dir rename is atomic.
+            if (containerDir.exists()) containerDir.deleteRecursively()
+            require(stagingDir.renameTo(containerDir)) { "cannot publish container '$name'" }
+
             onProgress?.invoke(InstallProgress("done"))
             ContainerInfo(name, imageRef, image.canonicalRef, arch)
         } catch (e: Exception) {
-            containerDir.deleteRecursively()
+            stagingDir.deleteRecursively()
             throw e
         }
     }
@@ -82,8 +92,12 @@ class DistroInstaller(
     fun uninstall(alias: String) {
         requireName(alias)
         val containerDir = File(filesDir, "containers/$alias")
-        if (!containerDir.exists()) throw IllegalArgumentException("container '$alias' not found")
+        val stagingDir = File(filesDir, "containers/$alias.part")
+        if (!containerDir.exists() && !stagingDir.exists()) {
+            throw IllegalArgumentException("container '$alias' not found")
+        }
         containerDir.deleteRecursively()
+        stagingDir.deleteRecursively()
     }
 
     // -- internals --------------------------------------------------------

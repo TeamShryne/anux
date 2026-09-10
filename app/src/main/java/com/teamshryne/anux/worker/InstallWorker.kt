@@ -1,10 +1,15 @@
 package com.teamshryne.anux.worker
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Process
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import com.teamshryne.anux.data.AnuxDatabase
@@ -20,6 +25,29 @@ import com.teamshryne.anux.distro.RegistryException
  * Unique work name: install-<alias>.
  */
 class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
+    /**
+     * Expedited work requires foreground info; the notification also keeps
+     * Oplus-style battery optimizers from killing the process mid-extract
+     * (which used to leave a partial rootfs behind).
+     */
+    override suspend fun getForegroundInfo(): ForegroundInfo {
+        val nm = applicationContext.getSystemService(NotificationManager::class.java)
+        nm.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Installs", NotificationManager.IMPORTANCE_LOW),
+        )
+        val notif = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setContentTitle("Installing ${inputData.getString(KEY_ALIAS).orEmpty()}…")
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setOngoing(true)
+            .build()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(NOTIF_ID, notif, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            @Suppress("DEPRECATION")
+            ForegroundInfo(NOTIF_ID, notif)
+        }
+    }
+
     override suspend fun doWork(): Result {
         val imageRef = inputData.getString(KEY_IMAGE).orEmpty()
         val alias = inputData.getString(KEY_ALIAS).orEmpty()
@@ -81,6 +109,8 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
 
     companion object {
         const val TAG = "InstallWorker"
+        const val CHANNEL_ID = "anux-install"
+        const val NOTIF_ID = 1338
         const val KEY_IMAGE = "imageRef"
         const val KEY_ALIAS = "alias"
         const val KEY_STAGE = "stage"

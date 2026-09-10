@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
@@ -37,8 +38,11 @@ class DistroRepository(private val context: Context, private val db: AnuxDatabas
     fun enqueueInstall(imageRef: String, alias: String) {
         DistroInstaller.requireName(alias)
         if (isInstalled(alias)) return
+        // Expedited: runs at foreground priority so the extractor survives
+        // aggressive battery optimizers; falls back to normal work on quota.
         val req = OneTimeWorkRequestBuilder<InstallWorker>()
             .setInputData(workDataOf(InstallWorker.KEY_IMAGE to imageRef, InstallWorker.KEY_ALIAS to alias))
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .addTag("install")
             .build()
         WorkManager.getInstance(context)

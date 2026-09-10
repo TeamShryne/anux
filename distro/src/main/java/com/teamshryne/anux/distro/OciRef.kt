@@ -56,7 +56,14 @@ object OciRef {
 
     fun containerDir(filesDir: File, alias: String): File = File(filesDir, "containers/$alias")
     fun rootfsDir(filesDir: File, alias: String): File = File(containerDir(filesDir, alias), "rootfs")
-    fun isInstalled(filesDir: File, alias: String): Boolean =
-        File(rootfsDir(filesDir, alias), "bin").isDirectory ||
+    /**
+     * manifest.json is written last during install, so a killed/interrupted
+     * install leaves a partial rootfs with no manifest — that must never
+     * count as installed (it has no shell and dies instantly on launch).
+     */
+    fun isInstalled(filesDir: File, alias: String): Boolean {
+        if (!File(containerDir(filesDir, alias), "manifest.json").isFile) return false
+        return File(rootfsDir(filesDir, alias), "bin").isDirectory ||
             File(rootfsDir(filesDir, alias), "usr/bin").isDirectory
+    }
 }
