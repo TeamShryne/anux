@@ -9,16 +9,17 @@ import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -27,6 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.teamshryne.anux.data.AnuxSettings
 import com.teamshryne.anux.service.AnuxService
 import com.teamshryne.anux.ui.DistrosScreen
 import com.teamshryne.anux.ui.SettingsScreen
@@ -37,8 +40,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            AnuxTheme {
-                AnuxRoot()
+            val app = application as AnuxApp
+            val settings by app.prefs.settings.collectAsStateWithLifecycle(
+                initialValue = AnuxSettings(),
+            )
+            AnuxTheme(darkTheme = settings.themeMode != 2 &&
+                (settings.themeMode == 1 || androidx.compose.foundation.isSystemInDarkTheme())) {
+                AnuxRoot(app)
             }
         }
     }
@@ -51,11 +59,12 @@ private enum class Tab(val title: String) {
 }
 
 @Composable
-private fun AnuxRoot() {
+private fun AnuxRoot(app: AnuxApp) {
     val context = LocalContext.current
     var tab by remember { mutableStateOf(Tab.Distros) }
     var service by remember { mutableStateOf<AnuxService?>(null) }
     var pendingAlias by remember { mutableStateOf<String?>(null) }
+    val settings by app.prefs.settings.collectAsStateWithLifecycle(initialValue = AnuxSettings())
 
     DisposableEffect(context) {
         val conn = object : ServiceConnection {
@@ -102,17 +111,29 @@ private fun AnuxRoot() {
     ) { padding ->
         val modifier = Modifier.padding(padding)
         when (tab) {
-            Tab.Distros -> androidx.compose.foundation.layout.Box(modifier) {
-                DistrosScreen(onLaunch = { alias ->
-                    pendingAlias = alias
-                    tab = Tab.Terminal
-                })
+            Tab.Distros -> Box(modifier) {
+                DistrosScreen(
+                    repository = app.repository,
+                    onLaunch = { alias ->
+                        pendingAlias = alias
+                        tab = Tab.Terminal
+                    },
+                )
             }
-            Tab.Terminal -> androidx.compose.foundation.layout.Box(modifier) {
-                TerminalScreen(service = service, pendingAlias = pendingAlias)
+            Tab.Terminal -> Box(modifier) {
+                TerminalScreen(
+                    service = service,
+                    pendingAlias = pendingAlias,
+                    settings = settings,
+                    onConsumePending = { pendingAlias = null },
+                )
             }
-            Tab.Settings -> androidx.compose.foundation.layout.Box(modifier) {
-                SettingsScreen()
+            Tab.Settings -> Box(modifier) {
+                SettingsScreen(
+                    prefs = app.prefs,
+                    repository = app.repository,
+                    settings = settings,
+                )
             }
         }
     }

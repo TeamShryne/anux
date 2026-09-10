@@ -36,15 +36,24 @@ jobs:
           sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
           echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
+      - name: Restore proot binaries cache
+        uses: actions/cache@v4
+        with:
+          path: app/src/main/assets/proot
+          key: proot-5.1.107.92-talloc-2.4.3-shmem-0.7
+
+      - name: Fetch proot binaries
+        run: bash scripts/fetch-proot.sh
+
       - name: Gradle cache (heavy)
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-home-cache-cleanup: true
 
-      - name: Build debug APK
+      - name: Unit tests + debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug --stacktrace
+          ./gradlew --no-daemon :distro:test :app:testDebugUnitTest assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

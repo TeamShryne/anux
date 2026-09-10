@@ -1,6 +1,8 @@
 # Gradle
 .gradle/
 build/
+# Proot binaries (fetched by scripts/fetch-proot.sh, cached in CI)
+app/src/main/assets/proot/
 # Android
 local.properties
 *.ap_

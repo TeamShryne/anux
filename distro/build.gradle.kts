@@ -1,27 +1,20 @@
 plugins {
-    // Versions come from the root buildscript classpath (shared with vendored modules).
-    id("com.android.library")
-    id("org.jetbrains.kotlin.android")
+    // Pure JVM module: fast unit tests, no Android SDK needed.
+    // Versions come from the root buildscript classpath.
+    id("org.jetbrains.kotlin.jvm")
 }
 
-android {
-    namespace = "com.teamshryne.anux.distro"
-    compileSdk = 36
-
-    defaultConfig {
-        minSdk = 26
-        consumerProguardFiles("consumer-rules.pro")
+tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions { jvmTarget = "17" }
 }
 
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.apache.commons:commons-compress:1.26.0")
-    implementation("androidx.annotation:annotation:1.9.0")
+    implementation("org.json:json:20240303")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

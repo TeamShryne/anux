@@ -10,17 +10,20 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
-import com.teamshryne.anux.distro.OciRef
-import com.teamshryne.anux.distro.ProotArgs
-import com.teamshryne.anux.shell.AnuxShellEnvironment
-import java.io.File
+import com.teamshryne.anux.bootstrap.BootstrapManager
+import com.teamshryne.anux.session.SessionCommand
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Foreground service owning all terminal sessions (one service, N sessions —
- * one per distro launch). Sessions are created lazily: TerminalSession spawns
- * the pty process on first updateSize(), triggered by TerminalView.attachSession().
+ * one per distro launch). Sessions are created via [launch]; the pty process
+ * itself starts when the UI attaches the session to a TerminalView.
  */
 class AnuxService : Service() {
 
@@ -34,6 +37,8 @@ class AnuxService : Service() {
 
     private val binder = LocalBinder(this)
     private val sessions = ConcurrentHashMap<String, SessionRecord>()
+    private val _sessionList = MutableStateFlow<List<SessionRecord>>(emptyList())
+    val sessionList: StateFlow<List<SessionRecord>> = _sessionList.asStateFlow()
 
     private val sessionClient = object : TerminalSessionClient {
         override fun onTextChanged(changedSession: TerminalSession) {}
@@ -41,7 +46,7 @@ class AnuxService : Service() {
         override fun onSessionFinished(finishedSession: TerminalSession) {
             sessions.entries.find { it.value.session == finishedSession }?.let {
                 sessions.remove(it.key)
-                updateNotification()
+                publish()
             }
         }
         override fun onCopyTextToClipboard(session: TerminalSession, text: String) {}
@@ -70,69 +75,63 @@ class AnuxService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundService()
         if (intent?.action == ACTION_STOP_ALL) {
-            stopAll()
+            sessions.values.forEach { it.session.finishIfRunning() }
+            sessions.clear()
+            publish()
             stopSelf()
         }
         return START_NOT_STICKY
     }
 
-    fun listSessions(): List<SessionRecord> = sessions.values.toList()
-
-    fun sessionForAlias(alias: String): SessionRecord? =
+    fun runningFor(alias: String): SessionRecord? =
         sessions.values.find { it.alias == alias && it.session.isRunning }
 
     /**
-     * Create (or reuse) a proot session for [alias]. The pty process starts when
-     * the UI attaches the session to a TerminalView.
+     * Bootstrap (extract proot on first run) + build argv/env, then register
+     * the session. Runs on Dispatchers.IO; safe to call from UI coroutines.
      */
-    fun launch(alias: String): SessionRecord {
-        sessionForAlias(alias)?.let { return it }
-        val shellEnv = AnuxShellEnvironment(filesDir)
-        shellEnv.ensureDirs()
-        val prootBin = findProotBin()
-            ?: throw IllegalStateException("proot binary missing (bootstrap not done yet)")
-        val argv = ProotArgs.build(
-            prootBin = prootBin,
+    suspend fun launch(
+        alias: String,
+        term: String = "xterm-256color",
+        kernelRelease: String = "6.17.0-PRoot-Distro",
+        hostname: String = "localhost",
+    ): SessionRecord = withContext(Dispatchers.IO) {
+        runningFor(alias)?.let { return@withContext it }
+        val paths = BootstrapManager(this@AnuxService).ensureInstalled()
+        val cmd = SessionCommand.build(
             filesDir = filesDir,
+            prootBin = paths.prootBin,
+            libDir = paths.libDir,
             alias = alias,
-            innerCmd = ProotArgs.defaultInnerCmd(),
+            term = term,
+            kernelRelease = kernelRelease,
+            hostname = hostname,
         )
-        val envList = (shellEnv.hostEnv() + ProotArgs.guestEnv())
-            .map { (k, v) -> "$k=$v" }.toTypedArray()
-        val cwd = OciRef.rootfsDir(filesDir, alias).absolutePath
         val session = TerminalSession(
-            prootBin.absolutePath,
-            cwd,
-            argv.drop(1).toTypedArray(),
-            envList,
+            cmd.executable,
+            cmd.cwd,
+            cmd.args,
+            cmd.env,
             TRANSCRIPT_ROWS,
             sessionClient,
         )
         session.mSessionName = alias
         val record = SessionRecord(UUID.randomUUID().toString(), alias, session)
         sessions[record.handle] = record
-        updateNotification()
-        return record
+        publish()
+        record
     }
 
     fun finish(handle: String) {
         sessions.remove(handle)?.session?.finishIfRunning()
-        updateNotification()
+        publish()
         if (sessions.isEmpty()) stopSelf()
     }
 
-    private fun stopAll() {
-        sessions.values.forEach { it.session.finishIfRunning() }
-        sessions.clear()
-    }
-
-    private fun findProotBin(): File? {
-        val candidates = listOf(
-            File(filesDir, "usr/bin/proot"),
-            File(applicationInfo.nativeLibraryDir, "libproot.so"),
-        )
-        return candidates.firstOrNull { it.isFile && it.canExecute() }
-            ?: candidates.firstOrNull { it.isFile }
+    private fun publish() {
+        _sessionList.value = sessions.values.toList()
+        val nm = getSystemService(NotificationManager::class.java)
+        runCatching { nm.notify(NOTIF_ID, buildNotification()) }
     }
 
     private fun startForegroundService() {
@@ -141,11 +140,6 @@ class AnuxService : Service() {
             NotificationChannel(CHANNEL_ID, "Sessions", NotificationManager.IMPORTANCE_LOW),
         )
         startForeground(NOTIF_ID, buildNotification())
-    }
-
-    private fun updateNotification() {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIF_ID, buildNotification())
     }
 
     private fun buildNotification(): Notification =
