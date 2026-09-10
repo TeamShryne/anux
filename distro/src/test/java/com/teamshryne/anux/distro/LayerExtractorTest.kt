@@ -22,7 +22,7 @@ internal fun makeLayer(dir: File, name: String, entries: Map<String, String?>): 
             } else {
                 val bytes = content.toByteArray()
                 e.size = bytes.size.toLong()
-                e.mode = 0b100_644
+                e.mode = 420 // 0644
                 tar.putArchiveEntry(e)
                 tar.write(bytes)
                 tar.closeArchiveEntry()

@@ -24,7 +24,7 @@ class DistroInstallerTest {
             .joinToString("") { "%02x".format(it) }
 
     /** Serves a complete minimal image: index -> manifest -> config -> one layer. */
-    private class FakeImage(val server: MockWebServer, workDir: File) {
+    private inner class FakeImage(val server: MockWebServer, workDir: File) {
         val layerBytes: ByteArray
         val ref: String
 
