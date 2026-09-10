@@ -26,7 +26,7 @@ data class ResolvedImage(
 
 /**
  * Minimal OCI/Docker registry client (pull-only), ported from
- * proot-distro helpers/docker/*.py. Blocking OkHttp calls run on Dispatchers.IO.
+ * proot-distro helpers/docker sources. Blocking OkHttp calls run on Dispatchers.IO.
  *
  * @param useHttpForCustomRegistries allow plain http for host:port registries
  *   (used by tests; production registries stay https).
