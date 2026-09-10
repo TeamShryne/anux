@@ -2,7 +2,7 @@ package com.teamshryne.anux.distro
 
 /** CPU architectures, mirroring proot-distro arch.py. */
 enum class CpuArch(val dockerArch: String, val dockerVariant: String? = null) {
-    AARCH64("arm64"),
+    AARCH64("arm64", "v8"),
     ARM("arm", "v7"),
     I686("386"),
     X86_64("amd64"),

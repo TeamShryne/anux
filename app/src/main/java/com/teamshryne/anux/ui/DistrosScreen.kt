@@ -168,7 +168,10 @@ private fun DistroCard(
 
             if (running != null) {
                 val p = running.progress
-                val stage = p.getString(InstallWorker.KEY_STAGE) ?: "working"
+                val rawStage = p.getString(InstallWorker.KEY_STAGE)
+                // Before the worker emits its first update (resolving) there is
+                // no stage yet; label it as queued so it doesn't look stuck.
+                val stage = rawStage ?: if (running.state == WorkInfo.State.ENQUEUED) "queued" else "starting"
                 val done = p.getLong(InstallWorker.KEY_DONE, 0)
                 val total = p.getLong(InstallWorker.KEY_TOTAL, -1)
                 Text("$stage…", style = MaterialTheme.typography.bodySmall)

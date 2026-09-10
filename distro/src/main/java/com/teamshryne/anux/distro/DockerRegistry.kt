@@ -42,7 +42,7 @@ class DockerRegistry(
             val session = AuthedSession(base, parsed.repo)
 
             val (firstBody, firstType) = session.getManifest("${parsed.tag}")
-            val manifestBody: String = if (isIndex(firstType)) {
+            val manifestBody: String = if (isIndex(firstType) || looksLikeIndex(firstBody)) {
                 val digest = pickPlatform(firstBody, arch)
                 session.getManifest(digest).first
             } else {
@@ -247,18 +247,76 @@ class DockerRegistry(
         internal fun isIndex(contentType: String): Boolean =
             "manifest.list" in contentType || "image.index" in contentType
 
+        internal fun looksLikeIndex(body: String): Boolean {
+            if (body.isEmpty() || body[0] != '{') return false
+            return runCatching {
+                val json = JSONObject(body)
+                val mediaType = json.optString("mediaType")
+                if ("manifest.list" in mediaType || "image.index" in mediaType) return true
+                json.has("manifests")
+            }.getOrDefault(false)
+        }
+
+        private fun archMatches(entryArch: String, arch: CpuArch): Boolean {
+            val a = entryArch.lowercase()
+            val want = arch.dockerArch.lowercase()
+            if (a == want) return true
+            // Tolerate registry aliases: aarch64<->arm64, x86_64<->amd64, i386/i686<->386.
+            return when (want) {
+                "arm64" -> a == "aarch64"
+                "amd64" -> a == "x86_64"
+                "386" -> a == "i386" || a == "i686" || a == "x86"
+                "arm" -> a == "armhfp" || a == "armhf"
+                else -> false
+            }
+        }
+
+        private fun variantMatches(entryVariant: String, arch: CpuArch): Boolean {
+            val v = entryVariant.lowercase()
+            // Registries often omit variant; treat that as a wildcard.
+            if (v.isEmpty()) return true
+            val want = arch.dockerVariant?.lowercase()
+            if (v == want) return true
+            return when (arch) {
+                // Docker Hub reports arm64 as v8; accept a missing/empty match too.
+                CpuArch.AARCH64 -> v == "v8"
+                // 32-bit ARM devices can run older variants; prefer v7 but accept v6/v5.
+                CpuArch.ARM -> v == "v6" || v == "v5"
+                else -> false
+            }
+        }
+
         internal fun pickPlatform(indexJson: String, arch: CpuArch): String {
             val manifests = JSONObject(indexJson).getJSONArray("manifests")
+            val available = mutableListOf<String>()
+            // First pass: linux + arch + variant match (mirrors proot-distro arch mapping).
             for (i in 0 until manifests.length()) {
                 val m = manifests.getJSONObject(i)
-                val p = m.optJSONObject("platform") ?: continue
-                val a = p.optString("architecture")
-                val v = p.optString("variant", "")
-                if (a == arch.dockerArch && (v.isEmpty() || v == arch.dockerVariant)) {
+                val p = m.optJSONObject("platform")
+                val a = p?.optString("architecture").orEmpty()
+                val os = p?.optString("os").orEmpty().lowercase()
+                val v = p?.optString("variant", "").orEmpty()
+                if (a.isNotEmpty()) {
+                    available += "$os/$a${if (v.isNotEmpty()) "/$v" else ""}"
+                }
+                if (p == null) continue
+                // Skip non-Linux entries (e.g. windows/amd64) when OS is known.
+                if (os.isNotEmpty() && os != "linux") continue
+                if (archMatches(a, arch) && variantMatches(v, arch)) {
                     return m.getString("digest")
                 }
             }
-            throw RegistryException("no ${arch.dockerArch} image in index")
+            // Second pass: some single-arch indexes omit the platform object entirely.
+            if (manifests.length() == 1) {
+                val only = manifests.getJSONObject(0)
+                if (only.optJSONObject("platform") == null) {
+                    return only.getString("digest")
+                }
+            }
+            throw RegistryException(
+                "no ${arch.dockerArch} image in index" +
+                    if (available.isNotEmpty()) " (available: ${available.joinToString()})" else "",
+            )
         }
     }
 }

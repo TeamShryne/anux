@@ -1,6 +1,7 @@
 package com.teamshryne.anux.worker
 
 import android.content.Context
+import android.os.Build
 import android.os.Process
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -8,8 +9,10 @@ import androidx.work.workDataOf
 import com.teamshryne.anux.data.AnuxDatabase
 import com.teamshryne.anux.data.ContainerEntity
 import com.teamshryne.anux.distro.CpuArch
+import com.teamshryne.anux.distro.DigestMismatchException
 import com.teamshryne.anux.distro.DistroInstaller
 import com.teamshryne.anux.distro.DockerRegistry
+import com.teamshryne.anux.distro.RegistryException
 
 /**
  * OCI install in the background with progress (stage, downloaded, total).
@@ -32,7 +35,7 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
             val info = installer.install(
                 imageRef = imageRef,
                 alias = alias,
-                arch = CpuArch.AARCH64,
+                arch = deviceCpuArch(),
             ) { p ->
                 @Suppress("DEPRECATION")
                 setProgressAsync(
@@ -56,7 +59,10 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
             )
             Result.success()
         } catch (e: Exception) {
-            if (runAttemptCount >= 2) {
+            // Deterministic failures must not retry: they would keep the card
+            // stuck on "working…" through 3 identical attempts before surfacing
+            // the real error (e.g. "no arm64 image in index").
+            if (isDeterministicFailure(e) || runAttemptCount >= 2) {
                 Result.failure(workDataOf(KEY_ERROR to (e.message ?: "install failed")))
             } else {
                 Result.retry()
@@ -75,5 +81,34 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
         const val KEY_ERROR = "error"
 
         fun nameFor(alias: String) = "install-$alias"
+
+        /** Map the device's primary ABI to an OCI arch (Termux proot-distro mapping). */
+        fun deviceCpuArch(): CpuArch {
+            val abis = runCatching { Build.SUPPORTED_ABIS.toList() }.getOrDefault(emptyList())
+            val primary = abis.firstOrNull().orEmpty().lowercase()
+            return when {
+                primary.startsWith("arm64") || primary.startsWith("aarch64") -> CpuArch.AARCH64
+                primary.startsWith("armeabi") || primary.startsWith("armv7") -> CpuArch.ARM
+                primary.startsWith("x86_64") -> CpuArch.X86_64
+                primary.startsWith("x86") -> CpuArch.I686
+                primary.startsWith("riscv64") -> CpuArch.RISCV64
+                else -> CpuArch.AARCH64
+            }
+        }
+
+        /** Errors that will fail identically on retry: surface immediately. */
+        fun isDeterministicFailure(e: Exception): Boolean = when (e) {
+            is IllegalStateException, is IllegalArgumentException,
+            is DigestMismatchException -> true
+            is RegistryException -> {
+                val msg = e.message.orEmpty()
+                // "no arm64 image in index", "unsupported digest", auth misconfig, etc.
+                "no " in msg && "image in index" in msg ||
+                    "unsupported digest" in msg ||
+                    "image has no layers" in msg ||
+                    "without Bearer challenge" in msg
+            }
+            else -> false
+        }
     }
 }

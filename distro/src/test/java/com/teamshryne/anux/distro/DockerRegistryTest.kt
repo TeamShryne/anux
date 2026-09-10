@@ -131,6 +131,45 @@ class DockerRegistryTest {
     }
 
     @Test
+    fun `index picks arm64 v8 variant like Docker Hub`() {
+        // Docker Hub reports arm64 as variant v8 (e.g. ubuntu:24.04, alpine:latest).
+        val index = JSONObject()
+            .put("schemaVersion", 2)
+            .put("mediaType", "application/vnd.docker.distribution.manifest.list.v2+json")
+            .put("manifests", org.json.JSONArray()
+                .put(JSONObject()
+                    .put("digest", sha("amd-manifest".toByteArray()))
+                    .put("platform", JSONObject().put("architecture", "amd64").put("os", "linux")))
+                .put(JSONObject()
+                    .put("digest", sha("arm-manifest".toByteArray()))
+                    .put("platform", JSONObject().put("architecture", "arm64").put("os", "linux").put("variant", "v8"))))
+            .toString()
+        val armDigest = sha("arm-manifest".toByteArray())
+        assertEquals(armDigest, DockerRegistry.pickPlatform(index, CpuArch.AARCH64))
+    }
+
+    @Test
+    fun `index skips windows entries and lists available on failure`() {
+        val index = JSONObject()
+            .put("schemaVersion", 2)
+            .put("manifests", org.json.JSONArray()
+                .put(JSONObject()
+                    .put("digest", sha("win".toByteArray()))
+                    .put("platform", JSONObject().put("architecture", "arm64").put("os", "windows")))
+                .put(JSONObject()
+                    .put("digest", sha("amd".toByteArray()))
+                    .put("platform", JSONObject().put("architecture", "amd64").put("os", "linux"))))
+            .toString()
+        try {
+            DockerRegistry.pickPlatform(index, CpuArch.AARCH64)
+            fail("expected RegistryException")
+        } catch (e: RegistryException) {
+            assertTrue(e.message!!.contains("no arm64 image in index"))
+            assertTrue(e.message!!.contains("available"))
+        }
+    }
+
+    @Test
     fun `blob download verifies digest`() = runBlocking {
         val server = MockWebServer()
         server.dispatcher = object : Dispatcher() {
