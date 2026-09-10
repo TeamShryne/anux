@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install platform + build-tools + NDK
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
+
+      - name: Gradle cache (heavy)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-home-cache-cleanup: true
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: anux-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  prune:
+    name: Prune stale caches (keep newest 20)
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Delete all but newest 20 caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          ids=$(gh api "repos/$REPO/actions/caches?per_page=100" \
+            -q '.actions_caches | sort_by(.created_at) | reverse | .[20:][].id')
+          if [ -z "$ids" ]; then
+            echo "nothing to prune"
+            exit 0
+          fi
+          for id in $ids; do
+            echo "delete cache $id"
+            gh api -X DELETE "repos/$REPO/actions/caches/$id" > /dev/null
+          done
