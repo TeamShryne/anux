@@ -24,9 +24,9 @@ for ABI in "${!MAP[@]}"; do
   fi
   echo "proot $ABI: downloading"
   mkdir -p "$D/lib" "$WORK/$ABI"
-  curl -sSFL -o "$WORK/$ABI/proot.deb" "$BASE/p/proot/proot_${PROOT_VER}_${T}.deb"
-  curl -sSFL -o "$WORK/$ABI/talloc.deb" "$BASE/libt/libtalloc/libtalloc_${TALLOC_VER}_${T}.deb"
-  curl -sSFL -o "$WORK/$ABI/shmem.deb" "$BASE/liba/libandroid-shmem/libandroid-shmem_${SHMEM_VER}_${T}.deb"
+  curl -sSfL -o "$WORK/$ABI/proot.deb" "$BASE/p/proot/proot_${PROOT_VER}_${T}.deb"
+  curl -sSfL -o "$WORK/$ABI/talloc.deb" "$BASE/libt/libtalloc/libtalloc_${TALLOC_VER}_${T}.deb"
+  curl -sSfL -o "$WORK/$ABI/shmem.deb" "$BASE/liba/libandroid-shmem/libandroid-shmem_${SHMEM_VER}_${T}.deb"
   for pkg in proot talloc shmem; do
     ar p "$WORK/$ABI/$pkg.deb" data.tar.xz | tar -xJ -C "$WORK/$ABI"
   done
