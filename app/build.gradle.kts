@@ -1,6 +1,7 @@
 plugins {
-    id("com.android.application") version "8.13.2"
-    id("org.jetbrains.kotlin.android") version "2.0.21"
+    // Versions come from the root buildscript classpath (shared with vendored modules).
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
