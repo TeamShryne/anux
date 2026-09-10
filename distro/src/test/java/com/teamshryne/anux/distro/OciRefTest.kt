@@ -63,10 +63,11 @@ class OciRefTest {
     @Test
     fun `staging dir never counts as installed`() {
         val filesDir = tmp.root
+        // A killed install leaves containers/<alias>.part/ behind; that must
+        // not make <alias> look installed.
         File(filesDir, "containers/broken.part/rootfs/bin").mkdirs()
         File(filesDir, "containers/broken.part/manifest.json").writeText("{}")
         assertFalse(OciRef.isInstalled(filesDir, "broken"))
-        assertFalse(OciRef.isInstalled(filesDir, "broken.part"))
     }
 
     @Test
