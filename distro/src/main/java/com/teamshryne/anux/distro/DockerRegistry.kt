@@ -61,7 +61,9 @@ class DockerRegistry(
 
             val configJson = session.getBlob(configDigest)
             val config = JSONObject(configJson).optJSONObject("config") ?: JSONObject()
-            val env = config.optJSONArray("env")?.let { arr ->
+            // Docker uses "Env" (capital E); accept lowercase too.
+            val envArr = config.optJSONArray("Env") ?: config.optJSONArray("env")
+            val env = envArr?.let { arr ->
                 (0 until arr.length()).map { arr.getString(it) }
             } ?: emptyList()
             val workingDir = config.optString("WorkingDir", "").ifEmpty { "/root" }
