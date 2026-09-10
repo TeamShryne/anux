@@ -44,7 +44,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Tab(val title: String) { Distros, Terminal, Settings }
+private enum class Tab(val title: String) {
+    Distros("Distros"),
+    Terminal("Terminal"),
+    Settings("Settings"),
+}
 
 @Composable
 private fun AnuxRoot() {
