@@ -21,19 +21,21 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
         val alias = inputData.getString(KEY_ALIAS).orEmpty()
         if (imageRef.isEmpty() || alias.isEmpty()) return Result.failure()
         return try {
+            val uid = Process.myUid()
             val installer = DistroInstaller(
                 filesDir = applicationContext.filesDir,
                 cacheDir = applicationContext.cacheDir,
                 registry = DockerRegistry(),
-                uid = Process.myUid(),
-                gid = Process.myGid(),
+                uid = uid,
+                gid = uid,
             )
             val info = installer.install(
                 imageRef = imageRef,
                 alias = alias,
                 arch = CpuArch.AARCH64,
             ) { p ->
-                setProgress(
+                @Suppress("DEPRECATION")
+                setProgressAsync(
                     workDataOf(
                         KEY_STAGE to p.stage,
                         KEY_INDEX to p.layerIndex,
