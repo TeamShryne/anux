@@ -33,21 +33,41 @@ class AnuxService : Service() {
         val handle: String,
         val alias: String,
         val session: TerminalSession,
+        val startedAtMillis: Long = System.currentTimeMillis(),
     )
+
+    /** A session that already exited (most recent first, capped). */
+    data class FinishedEvent(
+        val alias: String,
+        val handle: String,
+        val startedAtMillis: Long,
+        val finishedAtMillis: Long,
+    ) {
+        val lifetimeMillis: Long get() = finishedAtMillis - startedAtMillis
+    }
 
     private val binder = LocalBinder(this)
     private val sessions = ConcurrentHashMap<String, SessionRecord>()
     private val _sessionList = MutableStateFlow<List<SessionRecord>>(emptyList())
     val sessionList: StateFlow<List<SessionRecord>> = _sessionList.asStateFlow()
+    private val _finishedEvents = MutableStateFlow<List<FinishedEvent>>(emptyList())
+    val finishedEvents: StateFlow<List<FinishedEvent>> = _finishedEvents.asStateFlow()
 
     private val sessionClient = object : TerminalSessionClient {
         override fun onTextChanged(changedSession: TerminalSession) {}
         override fun onTitleChanged(changedSession: TerminalSession) {}
         override fun onSessionFinished(finishedSession: TerminalSession) {
-            sessions.entries.find { it.value.session == finishedSession }?.let {
-                sessions.remove(it.key)
-                publish()
+            val entry = sessions.entries.find { it.value.session == finishedSession }
+            val rec = entry?.value
+            if (entry != null) sessions.remove(entry.key)
+            if (rec != null) {
+                _finishedEvents.value = (
+                    listOf(
+                        FinishedEvent(rec.alias, rec.handle, rec.startedAtMillis, System.currentTimeMillis()),
+                    ) + _finishedEvents.value
+                ).take(20)
             }
+            publish()
         }
         override fun onCopyTextToClipboard(session: TerminalSession, text: String) {}
         override fun onPasteTextFromClipboard(session: TerminalSession?) {}

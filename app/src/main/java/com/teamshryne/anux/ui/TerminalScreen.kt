@@ -83,6 +83,10 @@ fun TerminalScreen(
         ?: remember { mutableStateOf(emptyList()) })
     var currentHandle by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    // When the guest process dies instantly (bad rootfs/proot), the record is
+    // created then removed within a second: buttons flash, then "No session
+    // yet" with no explanation. Remember launch time to name it instead.
+    var launchedAt by remember { mutableStateOf(0L) }
 
     LaunchedEffect(service, pendingAlias) {
         if (service != null && pendingAlias != null) {
@@ -94,6 +98,7 @@ fun TerminalScreen(
                     hostname = settings.hostname,
                 )
                 currentHandle = rec.handle
+                launchedAt = System.currentTimeMillis()
                 error = null
             } catch (e: Exception) {
                 error = "Launch failed: ${e.message}"
@@ -104,7 +109,14 @@ fun TerminalScreen(
 
     // Keep selection valid as sessions come and go.
     LaunchedEffect(records) {
-        if (records.none { it.handle == currentHandle }) {
+        val cur = currentHandle
+        if (cur != null && records.none { it.handle == cur }) {
+            if (launchedAt > 0 && System.currentTimeMillis() - launchedAt < 5000) {
+                error = "Session exited immediately — open the Debug tab for launch checks and logs."
+            }
+            launchedAt = 0L
+            currentHandle = records.firstOrNull { it.session.isRunning }?.handle
+        } else if (cur == null) {
             currentHandle = records.firstOrNull { it.session.isRunning }?.handle
         }
     }
@@ -152,6 +164,7 @@ fun TerminalScreen(
                 }
                 item {
                     OutlinedButton(onClick = {
+                        launchedAt = 0L
                         currentHandle?.let { service.finish(it) }
                     }) { Text("Kill") }
                 }

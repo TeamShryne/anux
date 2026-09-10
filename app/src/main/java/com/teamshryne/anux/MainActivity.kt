@@ -17,6 +17,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -31,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.teamshryne.anux.data.AnuxSettings
 import com.teamshryne.anux.service.AnuxService
+import com.teamshryne.anux.ui.DebugScreen
 import com.teamshryne.anux.ui.DistrosScreen
 import com.teamshryne.anux.ui.SettingsScreen
 import com.teamshryne.anux.ui.TerminalScreen
@@ -55,6 +57,7 @@ class MainActivity : ComponentActivity() {
 private enum class Tab(val title: String) {
     Distros("Distros"),
     Terminal("Terminal"),
+    Debug("Debug"),
     Settings("Settings"),
 }
 
@@ -101,6 +104,12 @@ private fun AnuxRoot(app: AnuxApp) {
                     label = { Text("Terminal") },
                 )
                 NavigationBarItem(
+                    selected = tab == Tab.Debug,
+                    onClick = { tab = Tab.Debug },
+                    icon = { Icon(Icons.Filled.BugReport, contentDescription = null) },
+                    label = { Text("Debug") },
+                )
+                NavigationBarItem(
                     selected = tab == Tab.Settings,
                     onClick = { tab = Tab.Settings },
                     icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
@@ -126,6 +135,12 @@ private fun AnuxRoot(app: AnuxApp) {
                     pendingAlias = pendingAlias,
                     settings = settings,
                     onConsumePending = { pendingAlias = null },
+                )
+            }
+            Tab.Debug -> Box(modifier) {
+                DebugScreen(
+                    service = service,
+                    filesDir = context.applicationContext.filesDir,
                 )
             }
             Tab.Settings -> Box(modifier) {

@@ -20,6 +20,7 @@ class SessionCommandTest {
         }
         val libDir = File(filesDir, "usr/lib").apply { mkdirs() }
         File(filesDir, "containers/ubuntu/rootfs/bin").mkdirs()
+        File(filesDir, "containers/ubuntu/rootfs/bin/sh").createNewFile()
         return Triple(filesDir, prootBin, libDir)
     }
 
@@ -56,6 +57,18 @@ class SessionCommandTest {
             fail("expected")
         } catch (e: IllegalArgumentException) {
             assertTrue(e.message!!.contains("not installed"))
+        }
+    }
+
+    @Test
+    fun `rootfs without shell throws`() {
+        val (filesDir, prootBin, libDir) = setup()
+        File(filesDir, "containers/noshell/rootfs/bin").mkdirs()
+        try {
+            SessionCommand.build(filesDir, prootBin, libDir, "noshell")
+            fail("expected")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("no shell"))
         }
     }
 

@@ -1,0 +1,233 @@
+package com.teamshryne.anux.ui
+
+import android.os.Process
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.teamshryne.anux.bootstrap.BootstrapManager
+import com.teamshryne.anux.debug.CheckResult
+import com.teamshryne.anux.debug.SessionDiagnostics
+import com.teamshryne.anux.service.AnuxService
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * On-device diagnostics for "session dies instantly" reports: live sessions,
+ * recently finished sessions with lifetimes, per-alias launch checks
+ * (proot, libs, rootfs, shell, argv) and this app's recent logcat output.
+ */
+@Composable
+fun DebugScreen(service: AnuxService?, filesDir: File) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val records by (service?.sessionList?.collectAsStateWithLifecycle(initialValue = emptyList())
+        ?: remember { mutableStateOf(emptyList()) })
+    val finished by (service?.finishedEvents?.collectAsStateWithLifecycle(initialValue = emptyList())
+        ?: remember { mutableStateOf(emptyList()) })
+
+    var alias by remember { mutableStateOf("alpine") }
+    var checks by remember { mutableStateOf<List<CheckResult>?>(null) }
+    var checking by remember { mutableStateOf(false) }
+    var logs by remember { mutableStateOf("Tap Refresh to load this app's recent logs.") }
+    var loadingLogs by remember { mutableStateOf(false) }
+
+    fun runChecks() {
+        val a = alias.trim()
+        if (a.isEmpty() || checking) return
+        checking = true
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                val abi = runCatching {
+                    BootstrapManager(context.applicationContext).abiDirName()
+                }.getOrElse { "unsupported (${it.message})" }
+                SessionDiagnostics.run(filesDir, a, abi)
+            }
+            checks = res
+            checking = false
+        }
+    }
+
+    fun loadLogs() {
+        if (loadingLogs) return
+        loadingLogs = true
+        scope.launch {
+            logs = withContext(Dispatchers.IO) { readOwnLogs(400) }
+            loadingLogs = false
+        }
+    }
+
+    LaunchedEffect(service) { runChecks() }
+
+    val scroll = rememberScrollState()
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Debug logs", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "When a session dies instantly, the cause is here: checks, argv and logs.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Live sessions (${records.size})", style = MaterialTheme.typography.titleMedium)
+                if (records.isEmpty()) {
+                    Text("none", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    records.forEach { rec ->
+                        Text(
+                            "● ${rec.alias} handle=${rec.handle.take(8)} running=${rec.session.isRunning}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Recently finished", style = MaterialTheme.typography.titleMedium)
+                if (finished.isEmpty()) {
+                    Text("none yet — launch a distro first", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    finished.forEach { ev ->
+                        val instant = ev.lifetimeMillis < 3000
+                        Text(
+                            (if (instant) "✗ " else "○ ") +
+                                "${ev.alias} lived ${ev.lifetimeMillis}ms" +
+                                if (instant) " (exited immediately)" else "",
+                            color = if (instant) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                        Text(
+                            "ended ${timeOf(ev.finishedAtMillis)}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Launch checks", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = alias,
+                        onValueChange = { alias = it },
+                        label = { Text("Alias") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Button(onClick = { runChecks() }, enabled = !checking) {
+                        Text(if (checking) "…" else "Run")
+                    }
+                }
+                checks?.forEach { c ->
+                    Text(
+                        (if (c.ok) "✓ " else "✗ ") + c.name,
+                        color = if (c.ok) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    SelectionContainer {
+                        Text(
+                            c.detail,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                        )
+                    }
+                }
+            }
+        }
+
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("App logs", style = MaterialTheme.typography.titleMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { loadLogs() }, enabled = !loadingLogs) {
+                        Text(if (loadingLogs) "…" else "Refresh")
+                    }
+                    OutlinedButton(onClick = {
+                        clipboard.setText(AnnotatedString(buildReport(alias, checks, finished.map {
+                            "${it.alias} lived ${it.lifetimeMillis}ms"
+                        }, logs)))
+                    }) { Text("Copy report") }
+                }
+                SelectionContainer {
+                    Text(logs, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
+    }
+}
+
+private fun timeOf(millis: Long): String =
+    SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(millis))
+
+private fun buildReport(
+    alias: String,
+    checks: List<CheckResult>?,
+    finished: List<String>,
+    logs: String,
+): String = buildString {
+    appendLine("anux debug report for '$alias'")
+    appendLine("--- checks ---")
+    checks?.forEach { appendLine("${if (it.ok) "OK" else "FAIL"} ${it.name}: ${it.detail}") }
+        ?: appendLine("(checks not run)")
+    appendLine("--- recently finished ---")
+    if (finished.isEmpty()) appendLine("(none)") else finished.forEach { appendLine(it) }
+    appendLine("--- app logs ---")
+    appendLine(logs)
+}
+
+/** This process's own recent logcat output; readable without extra permissions. */
+private fun readOwnLogs(maxLines: Int): String {
+    val pid = Process.myPid().toString()
+    val attempts = listOf(
+        arrayOf("logcat", "-d", "--pid", pid, "-t", maxLines.toString(), "*:V"),
+        arrayOf("logcat", "-d", "-t", maxLines.toString(), "*:V"),
+    )
+    for (args in attempts) {
+        val text = runCatching {
+            val p = Runtime.getRuntime().exec(args)
+            p.inputStream.bufferedReader().readText().trim()
+        }.getOrNull().orEmpty()
+        if (text.isNotEmpty()) return text.take(60_000)
+    }
+    return "logcat unavailable or empty"
+}

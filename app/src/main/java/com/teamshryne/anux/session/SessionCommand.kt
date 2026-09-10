@@ -28,6 +28,14 @@ object SessionCommand {
         require(prootBin.isFile) { "proot binary missing at ${prootBin.absolutePath} (bootstrap incomplete)" }
         val rootfs = OciRef.rootfsDir(filesDir, alias)
         require(rootfs.isDirectory) { "container '$alias' is not installed" }
+        // A rootfs dir can exist from a failed/interrupted install without a
+        // usable shell; launching that dies instantly with no message. Fail
+        // here with a clear error instead (symlinks like usrmerge /bin are followed).
+        val shellFound = listOf("bin/sh", "usr/bin/sh", "bin/bash", "usr/bin/bash")
+            .any { File(rootfs, it).isFile }
+        require(shellFound) {
+            "container '$alias' has no shell (bin/sh missing — install incomplete, delete and reinstall)"
+        }
         val argv = ProotArgs.build(
             prootBin = prootBin,
             filesDir = filesDir,
