@@ -3,6 +3,7 @@ package com.teamshryne.anux.worker
 import android.content.Context
 import android.os.Build
 import android.os.Process
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -59,11 +60,19 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
             )
             Result.success()
         } catch (e: Exception) {
+            Log.e(TAG, "install $alias ($imageRef) failed", e)
             // Deterministic failures must not retry: they would keep the card
             // stuck on "working…" through 3 identical attempts before surfacing
             // the real error (e.g. "no arm64 image in index").
+            // Always include the exception type: a bare null message would
+            // otherwise render as a useless generic "install failed".
+            val detail = e.message?.takeIf { it.isNotBlank() }
+                ?: e.toString()
+            val cause = generateSequence(e.cause) { it.cause }.firstOrNull()
+                ?.let { " (caused by ${it.javaClass.simpleName}: ${it.message})" }
+                .orEmpty()
             if (isDeterministicFailure(e) || runAttemptCount >= 2) {
-                Result.failure(workDataOf(KEY_ERROR to (e.message ?: "install failed")))
+                Result.failure(workDataOf(KEY_ERROR to "$detail$cause"))
             } else {
                 Result.retry()
             }
@@ -71,6 +80,7 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
     }
 
     companion object {
+        const val TAG = "InstallWorker"
         const val KEY_IMAGE = "imageRef"
         const val KEY_ALIAS = "alias"
         const val KEY_STAGE = "stage"

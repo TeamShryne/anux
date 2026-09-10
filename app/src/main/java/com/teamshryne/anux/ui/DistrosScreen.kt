@@ -156,6 +156,12 @@ private fun DistroCard(
     val work by progressOf().collectAsStateWithLifecycle(initialValue = emptyList())
     val running = work.firstOrNull { !it.state.isFinished }
     val failed = work.firstOrNull { it.state == WorkInfo.State.FAILED }
+    // WorkManager keeps finished history: a stale FAILED entry survives even
+    // after a later retry succeeds (files on disk are the truth for
+    // installed). Only surface the error when nothing is installed and
+    // nothing is currently running, so Launch is never shown next to a
+    // leftover "install failed".
+    val showFailed = failed != null && running == null && !isInstalled
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -186,7 +192,7 @@ private fun DistroCard(
             }
             failed?.let {
                 val msg = it.outputData.getString(InstallWorker.KEY_ERROR) ?: "install failed"
-                Text(msg, color = MaterialTheme.colorScheme.error)
+                if (showFailed) Text(msg, color = MaterialTheme.colorScheme.error)
             }
 
             Row(
@@ -207,7 +213,7 @@ private fun DistroCard(
                     }
                 }
             }
-            if (failed != null && !isInstalled) {
+            if (showFailed) {
                 OutlinedButton(onClick = onInstall, modifier = Modifier.padding(top = 8.dp)) {
                     Text("Retry")
                 }

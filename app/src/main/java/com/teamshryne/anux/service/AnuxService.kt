@@ -88,38 +88,49 @@ class AnuxService : Service() {
 
     /**
      * Bootstrap (extract proot on first run) + build argv/env, then register
-     * the session. Runs on Dispatchers.IO; safe to call from UI coroutines.
+     * the session. Heavy IO runs on Dispatchers.IO, but the TerminalSession
+     * itself MUST be constructed on the main thread: its field initializer
+     * creates a Handler bound to the calling thread's Looper (as in Termux),
+     * so building it on a worker thread crashes with
+     * "Can't create handler inside thread ... that has not called Looper.prepare()".
+     * Safe to call from UI coroutines.
      */
     suspend fun launch(
         alias: String,
         term: String = "xterm-256color",
         kernelRelease: String = "6.17.0-PRoot-Distro",
         hostname: String = "localhost",
-    ): SessionRecord = withContext(Dispatchers.IO) {
-        runningFor(alias)?.let { return@withContext it }
-        val paths = BootstrapManager(this@AnuxService).ensureInstalled()
-        val cmd = SessionCommand.build(
-            filesDir = filesDir,
-            prootBin = paths.prootBin,
-            libDir = paths.libDir,
-            alias = alias,
-            term = term,
-            kernelRelease = kernelRelease,
-            hostname = hostname,
-        )
-        val session = TerminalSession(
-            cmd.executable,
-            cmd.cwd,
-            cmd.args,
-            cmd.env,
-            TRANSCRIPT_ROWS,
-            sessionClient,
-        )
+    ): SessionRecord {
+        runningFor(alias)?.let { return it }
+        val paths = withContext(Dispatchers.IO) {
+            BootstrapManager(this@AnuxService).ensureInstalled()
+        }
+        val cmd = withContext(Dispatchers.IO) {
+            SessionCommand.build(
+                filesDir = filesDir,
+                prootBin = paths.prootBin,
+                libDir = paths.libDir,
+                alias = alias,
+                term = term,
+                kernelRelease = kernelRelease,
+                hostname = hostname,
+            )
+        }
+        val session = withContext(Dispatchers.Main) {
+            TerminalSession(
+                cmd.executable,
+                cmd.cwd,
+                cmd.args,
+                cmd.env,
+                TRANSCRIPT_ROWS,
+                sessionClient,
+            )
+        }
         session.mSessionName = alias
         val record = SessionRecord(UUID.randomUUID().toString(), alias, session)
         sessions[record.handle] = record
         publish()
-        record
+        return record
     }
 
     fun finish(handle: String) {
