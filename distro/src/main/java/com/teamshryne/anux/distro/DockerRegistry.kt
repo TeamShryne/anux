@@ -235,7 +235,7 @@ class DockerRegistry(
 
         internal fun parseChallenge(header: String): AuthChallenge? {
             if (!header.startsWith("Bearer ", ignoreCase = true)) return null
-            val params = Regex("""(\w+)="([^"]*)"""")
+            val params = Regex("(\\w+)=\"([^\"]*)\"")
                 .findAll(header.drop(7))
                 .associate { it.groupValues[1] to it.groupValues[2] }
             val realm = params["realm"] ?: return null

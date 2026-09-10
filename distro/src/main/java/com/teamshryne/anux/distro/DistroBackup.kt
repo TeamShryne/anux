@@ -7,7 +7,7 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.IOException
-import java.util.zip.GzipInputStream
+import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
 /**
@@ -50,7 +50,7 @@ object DistroBackup {
         val b1 = stream0.read()
         stream0.reset()
         val raw: java.io.InputStream =
-            if (b0 == 0x1f && b1 == 0x8b) GzipInputStream(stream0) else stream0
+            if (b0 == 0x1f && b1 == 0x8b) GZIPInputStream(stream0) else stream0
 
         var alias: String? = null
         val pendingManifest = mutableMapOf<String, ByteArray>()
