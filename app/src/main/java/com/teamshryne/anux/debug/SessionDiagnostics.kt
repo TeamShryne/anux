@@ -59,7 +59,7 @@ object SessionDiagnostics {
             out += CheckResult(
                 "launch argv",
                 true,
-                ([cmd.executable] + cmd.args).joinToString(" "),
+                (listOf(cmd.executable) + cmd.args).joinToString(" "),
             )
         } catch (e: Exception) {
             out += CheckResult("launch argv", false, "${e.javaClass.simpleName}: ${e.message}")
