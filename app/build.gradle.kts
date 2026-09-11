@@ -14,7 +14,12 @@ android {
     defaultConfig {
         applicationId = "com.teamshryne.anux"
         minSdk = 26
-        targetSdk = 35
+        // Pinned to 28 exactly like Termux (termux-app gradle.properties):
+        // modern Android gates SELinux domains and app-private exec policy on
+        // targetSdk, and target 35 gets EACCES executing files/usr binaries
+        // on-device while Termux (target 28) is unaffected. Do NOT raise
+        // without re-verifying proot launch on a real device.
+        targetSdk = 28
         versionCode = 1
         versionName = "0.1.0"
         vectorDrawables { useSupportLibrary = true }
