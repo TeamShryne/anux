@@ -104,7 +104,76 @@ object SessionDiagnostics {
             out += CheckResult("launch argv", false, "${e.javaClass.simpleName}: ${e.message}")
         }
         if (rootfs.isDirectory) out += guestExecReadiness(rootfs)
+        if (rootfs.isDirectory) out += prootExecMatrix(filesDir, alias)
         return out
+    }
+
+    /**
+     * Runs proot directly (no pty) with progressively richer argv against the
+     * installed rootfs to isolate which flag/condition makes guest exec fail.
+     * Each probe reports exit code + first output lines.
+     */
+    private fun prootExecMatrix(filesDir: File, alias: String): CheckResult {
+        val prootBin = File(filesDir, "usr/bin/proot")
+        val libDir = File(filesDir, "usr/lib")
+        val rootfs = OciRef.rootfsDir(filesDir, alias)
+        val l2s = File(rootfs, ".l2s").apply { mkdirs() }
+        val tmpDir = File(filesDir, "usr/tmp").apply { mkdirs() }
+        if (!prootBin.isFile) return CheckResult("proot exec matrix", false, "proot missing")
+        val baseEnv = mapOf(
+            "LD_LIBRARY_PATH" to libDir.absolutePath,
+            "PROOT_TMP_DIR" to tmpDir.absolutePath,
+            "PROOT_NO_SECCOMP" to "1",
+            "PROOT_L2S_DIR" to l2s.absolutePath,
+            "HOME" to "/root",
+            "PATH" to "/usr/bin:/bin",
+        )
+        // Resolve the guest shell the way launch does.
+        val shell = ProotArgs.resolveShell(rootfs)
+        val probes = listOf(
+            "minimal-echo" to listOf("--rootfs=${rootfs.absolutePath}", "/bin/echo", "PROBE1"),
+            "direct-busybox" to listOf("--rootfs=${rootfs.absolutePath}", "/bin/busybox", "echo", "PROBE2"),
+            "via-symlink-sh" to listOf("--rootfs=${rootfs.absolutePath}", shell, "-c", "echo PROBE3"),
+            "change-id" to listOf("--change-id=0:0", "--rootfs=${rootfs.absolutePath}", "/bin/echo", "PROBE4"),
+            "no-link2symlink" to listOf(
+                "--kill-on-exit", "--sysvipc", "-L", "--change-id=0:0",
+                "--rootfs=${rootfs.absolutePath}", "--cwd=/root",
+                "--bind=/dev", "--bind=/proc", "--bind=/sys",
+                "/bin/echo", "PROBE5",
+            ),
+            "full-argv-echo" to (
+                ProotArgs.build(
+                    prootBin, filesDir, alias, listOf("/bin/echo", "PROBE6"),
+                    ProotArgs.LoginOptions(
+                        cwd = "/root",
+                        targetArch = CpuArch.AARCH64,
+                    ),
+                ).drop(1)
+                ),
+        )
+        val lines = mutableListOf<String>()
+        var ok = false
+        for ((name, args) in probes) {
+            try {
+                val proc = ProcessBuilder(listOf(prootBin.absolutePath) + args)
+                    .redirectErrorStream(true)
+                    .apply { environment().putAll(baseEnv) }
+                    .start()
+                val done = proc.waitFor(20, java.util.concurrent.TimeUnit.SECONDS)
+                if (!done) {
+                    proc.destroyForcibly()
+                    lines += "$name: TIMEOUT"
+                    continue
+                }
+                val out = proc.inputStream.bufferedReader().readText().trim()
+                    .replace(Regex("\\s+"), " ").take(300)
+                lines += "$name: exit=${proc.exitValue()} $out"
+                if (proc.exitValue() == 0 && "PROBE" in out) ok = true
+            } catch (e: Exception) {
+                lines += "$name: ${e.javaClass.simpleName}: ${e.message}"
+            }
+        }
+        return CheckResult("proot exec matrix", ok, lines.joinToString("\n"))
     }
 
     /**
