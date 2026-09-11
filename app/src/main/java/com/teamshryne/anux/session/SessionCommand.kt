@@ -111,6 +111,10 @@ object SessionCommand {
             // also valid in-guest since $PREFIX is bound at the same path
             // (Termux does exactly this instead of /tmp, absent on Android).
             "TMPDIR" to "$prefix/tmp",
+            // Proot's ONLY temp knob (src/path/temp.c): $TMPDIR is ignored,
+            // bare /tmp is app-unwritable on some OEM builds (Oplus) while
+            // proot-distro/Termux never set this and rely on luck.
+            "PROOT_TMP_DIR" to "$prefix/tmp",
             // libtalloc + libandroid-shmem live next to proot; the binary's
             // RUNPATH points at the Termux prefix, so override the search path.
             // (Guest glibc binaries ignore these names; nothing of ours shadows libc.)
