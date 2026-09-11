@@ -143,14 +143,17 @@ class DistroInstaller(
     }
 
     private fun writeManifest(containerDir: File, imageRef: String, image: ResolvedImage, arch: CpuArch) {
+        // NOTE: wrap lists in JSONArray explicitly. JSONObject.put(String, Collection)
+        // exists in org.json:json (unit tests) but NOT in Android's org.json —
+        // on-device it throws NoSuchMethodError.
         val json = JSONObject()
             .put("imageRef", imageRef)
             .put("canonicalRef", image.canonicalRef)
             .put("arch", arch.name)
             .put("configDigest", image.configDigest)
-            .put("layers", image.layers.map { it.digest })
+            .put("layers", org.json.JSONArray(image.layers.map { it.digest }))
             // Image config: login needs Env + WorkingDir (mirrors image_env_pairs).
-            .put("env", image.env)
+            .put("env", org.json.JSONArray(image.env))
             .put("workingDir", image.workingDir.ifEmpty { "/root" })
             .put("createdAt", System.currentTimeMillis())
         File(containerDir, "manifest.json").writeText(json.toString(2))

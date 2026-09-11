@@ -89,7 +89,7 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
                 ),
             )
             Result.success()
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "install $alias ($imageRef) failed", e)
             // Deterministic failures must not retry: they would keep the card
             // stuck on "working…" through 3 identical attempts before surfacing
@@ -139,7 +139,7 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
         }
 
         /** Errors that will fail identically on retry: surface immediately. */
-        fun isDeterministicFailure(e: Exception): Boolean = when (e) {
+        fun isDeterministicFailure(e: Throwable): Boolean = when (e) {
             is IllegalStateException, is IllegalArgumentException,
             is DigestMismatchException, is SecurityException -> true
             is RegistryException -> {
