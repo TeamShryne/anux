@@ -153,6 +153,15 @@ fun DebugScreen(service: AnuxService?, filesDir: File) {
                             "ended ${timeOf(ev.finishedAtMillis)}",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (ev.tail.isNotBlank()) {
+                            SelectionContainer {
+                                Text(
+                                    "last output:\n${ev.tail.trim().take(1500)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -199,7 +208,10 @@ fun DebugScreen(service: AnuxService?, filesDir: File) {
                     }
                     OutlinedButton(onClick = {
                         clipboard.setText(AnnotatedString(buildReport(alias, checks, finished.map {
-                            "${it.alias} lived ${it.lifetimeMillis}ms"
+                            buildString {
+                                append("${it.alias} lived ${it.lifetimeMillis}ms")
+                                if (it.tail.isNotBlank()) append("\nlast output:\n${it.tail.trim().take(1500)}")
+                            }
                         }, logs)))
                     }) { Text("Copy report") }
                 }

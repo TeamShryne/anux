@@ -144,18 +144,55 @@ object SessionCommand {
         if (!f.isFile) return ManifestData()
         return runCatching {
             val text = f.readText()
-            val workingDir = Regex("\"workingDir\"\\s*:\\s*\"([^\"]*)\"")
-                .find(text)?.groupValues?.get(1).orEmpty()
-            val arch = Regex("\"arch\"\\s*:\\s*\"([^\"]*)\"")
-                .find(text)?.groupValues?.get(1).orEmpty()
-                .ifEmpty { CpuArch.AARCH64.name }
+            val workingDir = unescapeJsonString(
+                Regex("\"workingDir\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+                    .find(text)?.groupValues?.get(1).orEmpty(),
+            )
+            val arch = unescapeJsonString(
+                Regex("\"arch\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+                    .find(text)?.groupValues?.get(1).orEmpty(),
+            ).ifEmpty { CpuArch.AARCH64.name }
             val envBlock = Regex("\"env\"\\s*:\\s*\\[(.*?)]", RegexOption.DOT_MATCHES_ALL)
                 .find(text)?.groupValues?.get(1).orEmpty()
             val env = Regex("\"((?:[^\"\\\\]|\\\\.)*)\"").findAll(envBlock)
-                .map { it.groupValues[1].replace("\\\"", "\"").replace("\\\\", "\\") }
+                .map { unescapeJsonString(it.groupValues[1]) }
                 .toList()
             ManifestData(workingDir, arch, env)
         }.getOrDefault(ManifestData())
+    }
+
+    /** Minimal JSON string unescaper. org.json escapes `/` as `\/`, which the
+     * naive substring reader would otherwise leak into paths (`\/root`). */
+    internal fun unescapeJsonString(s: String): String {
+        if ('\\' !in s) return s
+        val out = StringBuilder(s.length)
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c == '\\' && i + 1 < s.length) {
+                when (val e = s[i + 1]) {
+                    '/', '\\', '"' -> { out.append(e); i += 2 }
+                    'n' -> { out.append('\n'); i += 2 }
+                    't' -> { out.append('\t'); i += 2 }
+                    'r' -> { out.append('\r'); i += 2 }
+                    'b' -> { out.append('\b'); i += 2 }
+                    'f' -> { out.append('\u000C'); i += 2 }
+                    'u' -> {
+                        val hex = s.substring(i + 2, minOf(i + 6, s.length))
+                        val code = hex.toIntOrNull(16)
+                        if (hex.length == 4 && code != null) {
+                            out.append(code.toChar()); i += 6
+                        } else {
+                            out.append(c); i++
+                        }
+                    }
+                    else -> { out.append(c); i++ }
+                }
+            } else {
+                out.append(c); i++
+            }
+        }
+        return out.toString()
     }
 
     /**

@@ -39,6 +39,21 @@ class SessionCommandTest {
     }
 
     @Test
+    fun `manifest with escaped slashes parses to clean paths`() {
+        // org.json escapes / as \/ on-device; the reader must unescape or
+        // proot gets --cwd=\/root and the session dies instantly.
+        val (filesDir, prootBin, libDir) = setup()
+        File(filesDir, "containers/ubuntu/manifest.json").writeText(
+            """{"workingDir":"\/root","arch":"AARCH64","env":["PATH=\/usr\/bin"]}""",
+        )
+        val cmd = SessionCommand.build(filesDir, prootBin, libDir, "ubuntu")
+        assertTrue(cmd.args.any { it == "--cwd=/root" })
+        val env = cmd.env.toMap()
+        assertTrue(env["PATH"]!!.split(":").contains("/usr/bin"))
+        assertFalse(cmd.args.any { it.contains("\\") && it.startsWith("--cwd=") })
+    }
+
+    @Test
     fun `missing proot throws`() {
         val (filesDir, _, libDir) = setup()
         try {

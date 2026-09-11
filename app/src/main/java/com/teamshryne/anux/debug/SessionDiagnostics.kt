@@ -46,9 +46,11 @@ object SessionDiagnostics {
         out += CheckResult("rootfs dir", rootfs.isDirectory, rootfs.absolutePath)
         if (rootfs.isDirectory) {
             val shell = runCatching { ProotArgs.resolveShell(rootfs) }.getOrNull()
+            // Guest-aware: guest-absolute symlinks dangle on the host.
+            val shellOk = shell != null && guestShell(rootfs) != null
             out += CheckResult(
                 "guest shell",
-                shell != null && File(rootfs, shell.trimStart('/')).isFile,
+                shellOk,
                 shell?.let { "resolved login shell: $it" }
                     ?: "none of ${SHELLS.joinToString()} — install incomplete, delete and reinstall",
             )

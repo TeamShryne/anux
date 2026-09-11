@@ -42,6 +42,8 @@ class AnuxService : Service() {
         val handle: String,
         val startedAtMillis: Long,
         val finishedAtMillis: Long,
+        /** Last terminal output before exit (truncated) — the guest's last words. */
+        val tail: String = "",
     ) {
         val lifetimeMillis: Long get() = finishedAtMillis - startedAtMillis
     }
@@ -61,9 +63,12 @@ class AnuxService : Service() {
             val rec = entry?.value
             if (entry != null) sessions.remove(entry.key)
             if (rec != null) {
+                val tail = runCatching {
+                    finishedSession.emulator.screen.transcriptText
+                }.getOrDefault("").takeLast(3000)
                 _finishedEvents.value = (
                     listOf(
-                        FinishedEvent(rec.alias, rec.handle, rec.startedAtMillis, System.currentTimeMillis()),
+                        FinishedEvent(rec.alias, rec.handle, rec.startedAtMillis, System.currentTimeMillis(), tail),
                     ) + _finishedEvents.value
                 ).take(20)
             }
