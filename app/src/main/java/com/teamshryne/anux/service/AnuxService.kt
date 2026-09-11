@@ -90,6 +90,12 @@ class AnuxService : Service() {
     override fun onCreate() {
         super.onCreate()
         startForegroundService()
+        // Extract proot eagerly (idempotent) so the Debug screen and the first
+        // launch see steady state instead of "bootstrap incomplete".
+        Thread {
+            runCatching { BootstrapManager(this).ensureInstalled() }
+                .onFailure { android.util.Log.e("AnuxService", "proot bootstrap failed", it) }
+        }.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

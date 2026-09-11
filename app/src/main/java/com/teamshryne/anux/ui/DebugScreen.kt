@@ -69,10 +69,25 @@ fun DebugScreen(service: AnuxService?, filesDir: File) {
         checking = true
         scope.launch {
             val res = withContext(Dispatchers.IO) {
+                val appCtx = context.applicationContext
                 val abi = runCatching {
-                    BootstrapManager(context.applicationContext).abiDirName()
+                    BootstrapManager(appCtx).abiDirName()
                 }.getOrElse { "unsupported (${it.message})" }
-                SessionDiagnostics.run(filesDir, a, abi)
+                val out = mutableListOf<CheckResult>()
+                // Bootstrap first (idempotent) so the proot checks below reflect
+                // steady state rather than "app was just installed".
+                val boot = runCatching { BootstrapManager(appCtx).ensureInstalled() }
+                out += CheckResult(
+                    "bootstrap",
+                    boot.isSuccess,
+                    boot.fold(
+                        { "proot+libs extracted to files/usr (abi=$abi)" },
+                        { "${it.javaClass.simpleName}: ${it.message}" },
+                    ),
+                )
+                out += probeApkAssets(appCtx, abi)
+                out += SessionDiagnostics.run(filesDir, a, abi)
+                out.toList()
             }
             checks = res
             checking = false
@@ -213,6 +228,23 @@ private fun buildReport(
     if (finished.isEmpty()) appendLine("(none)") else finished.forEach { appendLine(it) }
     appendLine("--- app logs ---")
     appendLine(logs)
+}
+
+/** Distinguishes "APK shipped no binaries" from "not extracted yet". */
+private fun probeApkAssets(ctx: android.content.Context, abi: String): CheckResult {
+    return runCatching {
+        val top = ctx.assets.list("proot/$abi")?.toList() ?: emptyList()
+        val libs = ctx.assets.list("proot/$abi/lib")?.toList() ?: emptyList()
+        val ok = "proot" in top &&
+            "libtalloc.so.2" in libs && "libandroid-shmem.so" in libs
+        CheckResult(
+            "proot assets in APK",
+            ok,
+            "proot/$abi=$top proot/$abi/lib=$libs",
+        )
+    }.getOrElse {
+        CheckResult("proot assets in APK", false, "${it.javaClass.simpleName}: ${it.message}")
+    }
 }
 
 /** This process's own recent logcat output; readable without extra permissions. */
