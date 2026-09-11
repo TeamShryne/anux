@@ -51,7 +51,9 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
     override suspend fun doWork(): Result {
         val imageRef = inputData.getString(KEY_IMAGE).orEmpty()
         val alias = inputData.getString(KEY_ALIAS).orEmpty()
-        if (imageRef.isEmpty() || alias.isEmpty()) return Result.failure()
+        if (imageRef.isEmpty() || alias.isEmpty()) {
+            return Result.failure(workDataOf(KEY_ERROR to "missing imageRef/alias input"))
+        }
         return try {
             val uid = Process.myUid()
             val installer = DistroInstaller(
@@ -139,7 +141,7 @@ class InstallWorker(appContext: Context, params: WorkerParameters) : CoroutineWo
         /** Errors that will fail identically on retry: surface immediately. */
         fun isDeterministicFailure(e: Exception): Boolean = when (e) {
             is IllegalStateException, is IllegalArgumentException,
-            is DigestMismatchException -> true
+            is DigestMismatchException, is SecurityException -> true
             is RegistryException -> {
                 val msg = e.message.orEmpty()
                 // "no arm64 image in index", "unsupported digest", auth misconfig, etc.
