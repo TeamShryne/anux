@@ -1,5 +1,6 @@
 package com.teamshryne.anux.debug
 
+import com.teamshryne.anux.distro.CpuArch
 import com.teamshryne.anux.distro.OciRef
 import com.teamshryne.anux.distro.ProotArgs
 import com.teamshryne.anux.session.SessionCommand
