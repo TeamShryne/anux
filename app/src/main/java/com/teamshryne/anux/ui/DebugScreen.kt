@@ -87,6 +87,11 @@ fun DebugScreen(service: AnuxService?, filesDir: File) {
                 )
                 out += probeApkAssets(appCtx, abi)
                 out += SessionDiagnostics.run(filesDir, a, abi)
+                out += execContextCheck(filesDir)
+                out += prootSmokeTest(
+                    File(filesDir, "usr/bin/proot"),
+                    File(filesDir, "usr/lib"),
+                )
                 out.toList()
             }
             checks = res
@@ -274,4 +279,55 @@ private fun readOwnLogs(maxLines: Int): String {
         if (text.isNotEmpty()) return text.take(60_000)
     }
     return "logcat unavailable or empty"
+}
+
+/**
+ * Exact exec context for the proot binary: octal mode/owner (coarse
+ * canExecute() is not enough) plus the mount options of the filesystem
+ * holding filesDir (a noexec mount fails execve with EACCES).
+ */
+private fun execContextCheck(filesDir: File): CheckResult {
+    val proot = File(filesDir, "usr/bin/proot")
+    val stat = runCatching {
+        val st = android.system.Os.stat(proot.absolutePath)
+        "mode=${Integer.toOctalString(st.st_mode and 0xFFF)} " +
+            "uid=${st.st_uid} gid=${st.st_gid} size=${st.st_size}"
+    }.getOrDefault("stat failed")
+    val mount = runCatching {
+        val path = filesDir.canonicalPath
+        File("/proc/self/mountinfo").readLines().mapNotNull { line ->
+            val f = line.split(" ")
+            if (f.size < 9) return@mapNotNull null
+            Triple(f[4], f[5], f[8])
+        }.filter { (mp, _, _) -> path == mp || path.startsWith(mp.trimEnd('/') + "/") }
+            .maxByOrNull { it.first.length }
+            ?.let { (mp, opts, fstype) -> "mp=$mp fstype=$fstype opts=$opts" }
+            ?: "mount not found"
+    }.getOrDefault("mountinfo unreadable")
+    val ok = proot.canExecute() && "noexec" !in mount
+    return CheckResult("exec context", ok, "$stat | $mount")
+}
+
+/**
+ * Runs `proot --version` directly via ProcessBuilder (no pty). If this
+ * fails with EACCES too, the problem is file-level; if it works, the
+ * problem is specific to the TerminalSession/libtermux exec path.
+ */
+private fun prootSmokeTest(prootBin: File, libDir: File): CheckResult {
+    if (!prootBin.isFile) return CheckResult("proot smoke test", false, "binary missing")
+    return try {
+        val proc = ProcessBuilder(prootBin.absolutePath, "--version")
+            .redirectErrorStream(true)
+            .apply { environment()["LD_LIBRARY_PATH"] = libDir.absolutePath }
+            .start()
+        val finished = proc.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+        if (!finished) {
+            proc.destroyForcibly()
+            return CheckResult("proot smoke test", false, "timed out after 15s")
+        }
+        val out = proc.inputStream.bufferedReader().readText().trim().take(500)
+        CheckResult("proot smoke test", proc.exitValue() == 0, "exit=${proc.exitValue()} out=$out")
+    } catch (e: Exception) {
+        CheckResult("proot smoke test", false, "${e.javaClass.simpleName}: ${e.message}")
+    }
 }
