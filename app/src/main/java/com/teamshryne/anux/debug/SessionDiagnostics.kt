@@ -103,7 +103,39 @@ object SessionDiagnostics {
         } catch (e: Exception) {
             out += CheckResult("launch argv", false, "${e.javaClass.simpleName}: ${e.message}")
         }
+        if (rootfs.isDirectory) out += guestExecReadiness(rootfs)
         return out
+    }
+
+    /**
+     * Reports exact on-disk state (mode/owner/link) of every file the guest
+     * exec chain touches: the shell, its link target, and the ELF
+     * interpreter. proot reports EACCES here while host exec of our own
+     * binaries works, so coarse exists()/canExecute() is not enough.
+     */
+    private fun guestExecReadiness(rootfs: File): CheckResult {
+        val lines = mutableListOf<String>()
+        var ok = true
+        for (guest in listOf("/bin/sh", "/bin/busybox", "/lib/ld-musl-aarch64.so.1", "/lib/libc.musl-aarch64.so.1", "/etc/passwd")) {
+            val rel = guest.trimStart('/')
+            val p = rootfs.canonicalFile.toPath().resolve(rel)
+            val nofollow = arrayOf(java.nio.file.LinkOption.NOFOLLOW_LINKS)
+            val isLink = runCatching { java.nio.file.Files.isSymbolicLink(p) }.getOrDefault(false)
+            val target = if (isLink) {
+                runCatching { java.nio.file.Files.readSymbolicLink(p).toString() }.getOrDefault("?")
+            } else null
+            val mode = runCatching {
+                Integer.toOctalString((java.nio.file.Files.getAttribute(p, "unix:mode", *nofollow) as Int) and 0xFFF)
+            }.getOrDefault("?")
+            val owner = runCatching { java.nio.file.Files.getOwner(p, *nofollow).name }.getOrDefault("?")
+            val size = runCatching { java.nio.file.Files.size(p) }.getOrDefault(-1)
+            val exists = runCatching { java.nio.file.Files.exists(p, *nofollow) }.getOrDefault(false)
+            // Resolve through links the way the kernel would (guest-anchored).
+            val effective = ProotArgs.guestFileExists(rootfs, guest)
+            lines += "$guest link=$isLink${if (target != null) "->$target" else ""} mode=$mode owner=$owner size=$size exists=$exists effective=$effective"
+            if (guest != "/etc/passwd" && !effective) ok = false
+        }
+        return CheckResult("guest exec readiness", ok, lines.joinToString("\n"))
     }
 
     private fun Array<String>.toMap(): Map<String, String> =
