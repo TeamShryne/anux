@@ -78,6 +78,7 @@ object SessionCommand {
         val imageEnv = manifest.env
 
         val prefix = File(filesDir, "usr").absolutePath
+        File(prefix, "tmp").apply { mkdirs() }
         val guestEnv = ProotArgs.guestEnv(
             term = term,
             prefix = prefix,
@@ -106,8 +107,10 @@ object SessionCommand {
 
         val env = mutableMapOf(
             "PREFIX" to prefix,
-            // Guest-visible tmp; the host prefix tmp is NOT the guest /tmp.
-            "TMPDIR" to "/tmp",
+            // Host-writable tmp for proot itself (it stages binds there);
+            // also valid in-guest since $PREFIX is bound at the same path
+            // (Termux does exactly this instead of /tmp, absent on Android).
+            "TMPDIR" to "$prefix/tmp",
             // libtalloc + libandroid-shmem live next to proot; the binary's
             // RUNPATH points at the Termux prefix, so override the search path.
             // (Guest glibc binaries ignore these names; nothing of ours shadows libc.)
