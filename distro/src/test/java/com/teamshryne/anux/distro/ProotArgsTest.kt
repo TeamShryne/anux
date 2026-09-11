@@ -83,8 +83,25 @@ class ProotArgsTest {
     }
 
     @Test
-    fun `image env blocked vars are filtered`() {
-        val env = ProotArgs.guestEnv(
+    fun `guestFileExists follows guest-absolute symlinks`() {
+        val rootfs = tmp.newFolder("rootfs-links")
+        java.io.File(rootfs, "bin").mkdirs()
+        java.io.File(rootfs, "bin/busybox").createNewFile()
+        val sh = java.nio.file.Path.of(rootfs.absolutePath, "bin", "sh")
+        // Guest-absolute link (alpine style): dangles on the host outside
+        // the rootfs, but valid in-guest. Plain isFile would say false.
+        java.nio.file.Files.createSymbolicLink(sh, java.nio.file.Path.of("/bin/busybox"))
+        assertFalse(java.io.File(rootfs, "bin/sh").isFile)
+        assertTrue(ProotArgs.guestFileExists(rootfs, "/bin/sh"))
+        assertTrue(ProotArgs.guestFileExists(rootfs, "/bin/busybox"))
+        assertFalse(ProotArgs.guestFileExists(rootfs, "/bin/missing"))
+        assertFalse(ProotArgs.guestFileExists(rootfs, "/../escape"))
+        // resolveShell picks it up too.
+        assertEquals("/bin/sh", ProotArgs.resolveShell(rootfs))
+    }
+
+    @Test
+    fun `image env blocked vars are filtered`() {        val env = ProotArgs.guestEnv(
             imageEnv = listOf(
                 "MYAPP=1",
                 "TERM=evil",

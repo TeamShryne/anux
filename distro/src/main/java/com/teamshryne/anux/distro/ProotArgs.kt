@@ -154,8 +154,46 @@ object ProotArgs {
             add("/bin/bash")
             add("/usr/bin/bash")
         }.distinct()
-        return candidates.firstOrNull { File(rootfs, it.trimStart('/')).isFile }
+        return candidates.firstOrNull { guestFileExists(rootfs, it) }
             ?: "/bin/sh"
+    }
+
+    /**
+     * Guest-aware existence check. Plain `File(rootfs, path).isFile` follows
+     * symlinks against the HOST filesystem, so a guest-absolute link like
+     * `/bin/sh -> /bin/busybox` dangles on Android (no host /bin/busybox) and
+     * wrongly reports "no shell". This walks the path re-anchoring absolute
+     * links at [rootfs] (like proot does at runtime); a link whose target
+     * resolves inside the guest counts as present even when it dangles
+     * on the host. Mirrors proot-distro's guestfile path walk.
+     */
+    fun guestFileExists(rootfs: File, guestAbsPath: String, maxHops: Int = 40): Boolean {
+        val root = rootfs.canonicalFile.toPath().normalize()
+        val remaining = ArrayDeque(guestAbsPath.trimStart('/').split("/").filter { it.isNotEmpty() })
+        if (remaining.isEmpty()) return rootfs.isDirectory
+        var cur = root
+        var hops = 0
+        while (remaining.isNotEmpty()) {
+            val part = remaining.removeFirst()
+            if (part == ".") continue
+            if (part == "..") {
+                cur = cur.parent?.takeIf { it.startsWith(root) } ?: return false
+                continue
+            }
+            val next = cur.resolve(part).normalize()
+            if (!next.startsWith(root)) return false
+            if (Files.isSymbolicLink(next)) {
+                if (++hops > maxHops) return false
+                val target = runCatching { Files.readSymbolicLink(next).toString() }.getOrDefault("")
+                if (target.isEmpty()) return false
+                cur = if (target.startsWith("/")) root else (next.parent ?: return false)
+                val tparts = target.trimStart('/').split("/").filter { it.isNotEmpty() && it != "." }
+                for (p in tparts.reversed()) remaining.addFirst(p)
+                continue
+            }
+            cur = next
+        }
+        return runCatching { Files.exists(cur, LinkOption.NOFOLLOW_LINKS) }.getOrDefault(false)
     }
 
     fun defaultInnerCmd(rootfs: File): List<String> = listOf(resolveShell(rootfs), "-l")

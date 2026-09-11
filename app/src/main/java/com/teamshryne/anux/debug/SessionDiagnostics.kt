@@ -17,7 +17,7 @@ object SessionDiagnostics {
     val SHELLS = listOf("bin/sh", "usr/bin/sh", "bin/bash", "usr/bin/bash")
 
     fun guestShell(rootfs: File): String? =
-        SHELLS.firstOrNull { File(rootfs, it).isFile }
+        SHELLS.firstOrNull { ProotArgs.guestFileExists(rootfs, "/$it") }
 
     fun run(filesDir: File, alias: String, abiLabel: String?): List<CheckResult> {
         val out = mutableListOf<CheckResult>()

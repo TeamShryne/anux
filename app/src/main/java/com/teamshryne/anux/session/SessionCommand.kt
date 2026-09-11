@@ -65,7 +65,9 @@ object SessionCommand {
         // A rootfs dir can exist from a failed install without a usable shell;
         // fail here with a clear error instead of dying instantly with no message.
         val shell = ProotArgs.resolveShell(rootfs)
-        val shellOk = File(rootfs, shell.trimStart('/')).isFile
+        // Guest-aware check: guest-absolute symlinks (e.g. /bin/sh ->
+        // /bin/busybox) dangle on the host, so plain isFile lies here.
+        val shellOk = ProotArgs.guestFileExists(rootfs, shell)
         require(shellOk) {
             "container '$alias' has no shell (bin/sh missing — install incomplete, delete and reinstall)"
         }
