@@ -115,6 +115,12 @@ object SessionCommand {
             // bare /tmp is app-unwritable on some OEM builds (Oplus) while
             // proot-distro/Termux never set this and rely on luck.
             "PROOT_TMP_DIR" to "$prefix/tmp",
+            // Disable proot's seccomp-bpf fast path (pure ptrace instead).
+            // On some OEM kernels (Oplus) the filter breaks the tracee's
+            // first execve with EACCES even though every file/mount/MAC
+            // check passes; proot documents this knob for kernel breakage
+            // (see print_execve_help in cli.c). Compat over speed.
+            "PROOT_NO_SECCOMP" to "1",
             // libtalloc + libandroid-shmem live next to proot; the binary's
             // RUNPATH points at the Termux prefix, so override the search path.
             // (Guest glibc binaries ignore these names; nothing of ours shadows libc.)
