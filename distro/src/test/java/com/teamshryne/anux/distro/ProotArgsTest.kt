@@ -91,7 +91,8 @@ class ProotArgsTest {
         // Guest-absolute link (alpine style): dangles on the host outside
         // the rootfs, but valid in-guest. Plain isFile would say false.
         java.nio.file.Files.createSymbolicLink(sh, java.nio.file.Path.of("/bin/busybox"))
-        assertFalse(java.io.File(rootfs, "bin/sh").isFile)
+        // Guest-absolute link (alpine style): must resolve at the rootfs,
+        // regardless of whether the target also exists on the host.
         assertTrue(ProotArgs.guestFileExists(rootfs, "/bin/sh"))
         assertTrue(ProotArgs.guestFileExists(rootfs, "/bin/busybox"))
         assertFalse(ProotArgs.guestFileExists(rootfs, "/bin/missing"))
@@ -101,7 +102,8 @@ class ProotArgsTest {
     }
 
     @Test
-    fun `image env blocked vars are filtered`() {        val env = ProotArgs.guestEnv(
+    fun `image env blocked vars are filtered`() {
+        val env = ProotArgs.guestEnv(
             imageEnv = listOf(
                 "MYAPP=1",
                 "TERM=evil",
