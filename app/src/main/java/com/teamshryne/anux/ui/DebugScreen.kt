@@ -92,6 +92,7 @@ fun DebugScreen(service: AnuxService?, filesDir: File) {
                     File(filesDir, "usr/bin/proot"),
                     File(filesDir, "usr/lib"),
                 )
+                out += execProbeCheck(appCtx, filesDir)
                 out.toList()
             }
             checks = res
@@ -309,12 +310,78 @@ private fun execContextCheck(filesDir: File): CheckResult {
 }
 
 /**
+ * Three-way exec experiment to isolate EACCES:
+ * 1. system shell (baseline — exec works at all?),
+ * 2. system shell copied into files/ + chmod 755 (does ANY private-dir
+ *    binary exec, or is the location blocked?),
+ * 3. sha256(APK asset) vs sha256(extracted proot) (extraction faithful?).
+ */
+private fun execProbeCheck(appCtx: android.content.Context, filesDir: File): CheckResult {
+    val lines = mutableListOf<String>()
+    var ok = true
+    // 1. Baseline.
+    try {
+        val p = ProcessBuilder("/system/bin/sh", "-c", "exit 42").start()
+        p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+        lines += "system-sh exit=${p.exitValue()}"
+        if (p.exitValue() != 42) ok = false
+    } catch (e: Exception) {
+        ok = false
+        lines += "system-sh ${e.javaClass.simpleName}: ${e.message}"
+    }
+    // 2. Same-dir control.
+    try {
+        val probe = File(filesDir, "usr/bin/probe-sh")
+        File("/system/bin/sh").copyTo(probe, overwrite = true)
+        android.system.Os.chmod(probe.absolutePath, 0b111_101_101)
+        val p = ProcessBuilder(probe.absolutePath, "-c", "exit 43").start()
+        p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+        lines += "private-sh exit=${p.exitValue()}"
+        if (p.exitValue() != 43) ok = false
+    } catch (e: Exception) {
+        ok = false
+        lines += "private-sh ${e.javaClass.simpleName}: ${e.message}"
+    } finally {
+        runCatching { File(filesDir, "usr/bin/probe-sh").delete() }
+    }
+    // 3. Extraction fidelity.
+    try {
+        val abi = com.teamshryne.anux.bootstrap.BootstrapManager(appCtx).abiDirName()
+        val mdAsset = java.security.MessageDigest.getInstance("SHA-256")
+        appCtx.assets.open("proot/$abi/proot").use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                mdAsset.update(buf, 0, n)
+            }
+        }
+        val mdFile = java.security.MessageDigest.getInstance("SHA-256")
+        File(filesDir, "usr/bin/proot").inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                mdFile.update(buf, 0, n)
+            }
+        }
+        fun hex(d: ByteArray) = d.joinToString("") { "%02x".format(it) }.take(16)
+        val match = mdAsset.digest().contentEquals(mdFile.digest())
+        lines += "sha asset=${hex(mdAsset.digest())} file=${hex(mdFile.digest())} match=$match"
+        if (!match) ok = false
+    } catch (e: Exception) {
+        ok = false
+        lines += "sha ${e.javaClass.simpleName}: ${e.message}"
+    }
+    return CheckResult("exec probes", ok, lines.joinToString(" | "))
+}
+
+/**
  * Runs `proot --version` directly via ProcessBuilder (no pty). If this
  * fails with EACCES too, the problem is file-level; if it works, the
  * problem is specific to the TerminalSession/libtermux exec path.
  */
-private fun prootSmokeTest(prootBin: File, libDir: File): CheckResult {
-    if (!prootBin.isFile) return CheckResult("proot smoke test", false, "binary missing")
+private fun prootSmokeTest(prootBin: File, libDir: File): CheckResult {    if (!prootBin.isFile) return CheckResult("proot smoke test", false, "binary missing")
     return try {
         val proc = ProcessBuilder(prootBin.absolutePath, "--version")
             .redirectErrorStream(true)

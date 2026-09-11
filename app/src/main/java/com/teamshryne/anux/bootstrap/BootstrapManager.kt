@@ -62,11 +62,12 @@ class BootstrapManager(private val context: Context) {
 
     private fun makeExecutable(file: File) {
         try {
-            // 0755: owner rwx + group/other rx (was 0700; group/other rx is
-            // harmless app-private and matches Termux package permissions).
-            Os.chmod(file.absolutePath, 0b111_101_101)
+            // Mirror TermuxInstaller exactly: owner-only 0700. Some OEM
+            // kernels (Oplus) refuse exec of group/other-accessible files
+            // from app-private dirs with EACCES and no audit trail.
+            Os.chmod(file.absolutePath, 0b111_000_000)
         } catch (_: Exception) {
-            file.setExecutable(true, false)
+            file.setExecutable(true, true)
         }
     }
 }
