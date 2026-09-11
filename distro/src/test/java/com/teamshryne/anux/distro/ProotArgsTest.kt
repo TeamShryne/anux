@@ -58,7 +58,9 @@ class ProotArgsTest {
         val arg = ProotArgs.kernelReleaseArg("myhost", "6.17.0-PRoot-Distro", CpuArch.AARCH64)
         assertTrue(arg.startsWith("--kernel-release="))
         assertTrue("\\Linux\\myhost\\6.17.0-PRoot-Distro\\" in arg)
-        assertTrue(" " !in arg)
+        // Backslash-separated tuple (Termux format); the embedded fake
+        // version string itself contains spaces, exactly like upstream.
+        assertTrue(ProotArgs.FAKE_KERNEL_VERSION in arg)
         assertTrue("aarch64" in arg)
         assertEquals("armv7l", ProotArgs.unameM(CpuArch.ARM))
     }
