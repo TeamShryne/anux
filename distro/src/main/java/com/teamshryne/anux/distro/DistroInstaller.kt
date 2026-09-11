@@ -41,6 +41,18 @@ class DistroInstaller(
     ): ContainerInfo = withContext(Dispatchers.IO) {
         val name = alias ?: OciRef.localName(imageRef)
         requireName(name)
+        // Exclusive lock: concurrent install/remove of the same container corrupts it.
+        ContainerLock.withLockSuspend(filesDir, name, exclusive = true) {
+            installLocked(imageRef, name, arch, onProgress)
+        }
+    }
+
+    private suspend fun installLocked(
+        imageRef: String,
+        name: String,
+        arch: CpuArch,
+        onProgress: ((InstallProgress) -> Unit)?,
+    ): ContainerInfo {
         val containerDir = File(filesDir, "containers/$name")
         // Staging dir: a killed process leaves partial output here, which —
         // unlike the final dir — is never treated as installed.
@@ -53,7 +65,7 @@ class DistroInstaller(
         if (stagingDir.exists()) stagingDir.deleteRecursively()
         if (containerDir.exists()) containerDir.deleteRecursively()
 
-        try {
+        return try {
             onProgress?.invoke(InstallProgress("resolving"))
             val image = registry.resolveImage(imageRef, arch)
 
@@ -71,10 +83,10 @@ class DistroInstaller(
             onProgress?.invoke(InstallProgress("configuring"))
             writeManifest(stagingDir, imageRef, image, arch)
             fixupRootfs(rootfs)
-            File(stagingDir, "shm").apply {
-                mkdirs()
-                chmod1777(this)
-            }
+            val stagingContainer = stagingDir
+            ProotArgs.ensureShm(stagingContainer)
+            ProotArgs.ensureGuestTmp(rootfs)
+            ProotArgs.ensureSysdata(rootfs, stagingContainer)
 
             // Atomic publish: only a fully-written tree ever becomes the container.
             // Same parent dir => same filesystem => dir rename is atomic.
@@ -91,13 +103,18 @@ class DistroInstaller(
 
     fun uninstall(alias: String) {
         requireName(alias)
-        val containerDir = File(filesDir, "containers/$alias")
-        val stagingDir = File(filesDir, "containers/$alias.part")
-        if (!containerDir.exists() && !stagingDir.exists()) {
-            throw IllegalArgumentException("container '$alias' not found")
+        ContainerLock.withLock(filesDir, alias, exclusive = true) {
+            val containerDir = File(filesDir, "containers/$alias")
+            val stagingDir = File(filesDir, "containers/$alias.part")
+            if (!containerDir.exists() && !stagingDir.exists()) {
+                throw IllegalArgumentException("container '$alias' not found")
+            }
+            // Fix chmod-000'd files on the fly so the rootfs can always be cleared.
+            runCatching { fixPermissions(containerDir) }
+            runCatching { fixPermissions(stagingDir) }
+            containerDir.deleteRecursively()
+            stagingDir.deleteRecursively()
         }
-        containerDir.deleteRecursively()
-        stagingDir.deleteRecursively()
     }
 
     // -- internals --------------------------------------------------------
@@ -119,9 +136,10 @@ class DistroInstaller(
             val line = "aid_user:x:$uid:$gid:Android user:/data/data/com.teamshryne.anux/files/home:/bin/sh\n"
             if (!passwd.readText().contains("aid_user:")) passwd.appendText(line)
         }
-        // Fake sysdata stubs (uptime/loadavg) bound over /proc at login.
-        val sysdata = File(rootfs, "../sysdata").canonicalFile.apply { mkdirs() }
-        File(sysdata, "loadavg").writeText("0.0 0.0 0.0 1/1 1\n")
+        // Fake sysdata stubs (bound over /proc at login, mirrors sysdata.py).
+        // Written here so the container is complete even if login never runs
+        // setup; login re-validates and re-creates missing entries.
+        ProotArgs.ensureSysdata(rootfs, File(rootfs, "../").canonicalFile)
     }
 
     private fun writeManifest(containerDir: File, imageRef: String, image: ResolvedImage, arch: CpuArch) {
@@ -131,20 +149,23 @@ class DistroInstaller(
             .put("arch", arch.name)
             .put("configDigest", image.configDigest)
             .put("layers", image.layers.map { it.digest })
+            // Image config: login needs Env + WorkingDir (mirrors image_env_pairs).
+            .put("env", image.env)
+            .put("workingDir", image.workingDir.ifEmpty { "/root" })
             .put("createdAt", System.currentTimeMillis())
         File(containerDir, "manifest.json").writeText(json.toString(2))
     }
 
-    private fun chmod1777(dir: File) {
-        // Best-effort world rwx (java.io only; avoids NIO POSIX edge cases).
-        // The sticky bit is irrelevant inside the proot container.
-        runCatching { dir.setReadable(true, false) }
-        runCatching { dir.setWritable(true, false) }
-        runCatching { dir.setExecutable(true, false) }
+    private fun fixPermissions(dir: File) {
+        if (!dir.exists()) return
+        dir.walkBottomUp().forEach {
+            runCatching { it.setReadable(true) }
+            runCatching { it.setWritable(true) }
+            if (it.isDirectory) runCatching { it.setExecutable(true) }
+        }
     }
 
-    companion object {
-        private val NAME_RE = Regex("[A-Za-z0-9][A-Za-z0-9_.-]*")
+    companion object {        private val NAME_RE = Regex("[A-Za-z0-9][A-Za-z0-9_.-]*")
 
         fun requireName(name: String) {
             require(name.isNotEmpty() && NAME_RE.matches(name)) {

@@ -57,35 +57,34 @@ object DistroBackup {
         TarArchiveInputStream(raw).use { tin ->
             var entry = tin.nextEntry
             while (entry != null) {
-                if (!entry.isDirectory) {
-                    val parts = entry.name.split("/").filter { it.isNotEmpty() }
-                    require(parts.size >= 2 && parts[0].isNotEmpty()) {
-                        "bad backup layout: ${entry.name}"
-                    }
-                    val top = parts[0]
-                    DistroInstaller.requireName(top)
-                    if (alias == null) alias = top
-                    require(alias == top) { "backup contains multiple containers" }
-                    val rest = parts.drop(1)
-                    require(rest[0] == "rootfs" || (rest.size == 1 && rest[0] == "manifest.json")) {
-                        "unexpected backup path: ${entry.name}"
-                    }
-                    if (rest.size == 1) {
-                        pendingManifest[top] = readEntryBytes(tin, entry.size)
-                    } else {
-                        val dest = safeDest(filesDir, top, rest.drop(1))
-                        if (entry.isDirectory) {
-                            dest.mkdirs()
-                        } else if (entry.isSymbolicLink) {
-                            dest.parentFile?.mkdirs()
-                            dest.delete()
-                            runCatching {
-                                java.nio.file.Files.createSymbolicLink(dest.toPath(), java.nio.file.Path.of(entry.linkName))
-                            }
-                        } else if (entry.isFile) {
-                            dest.parentFile?.mkdirs()
-                            dest.outputStream().use { out -> tin.copyTo(out) }
+                val parts = entry.name.split("/").filter { it.isNotEmpty() }
+                require(parts.size >= 2 && parts[0].isNotEmpty()) {
+                    "bad backup layout: ${entry.name}"
+                }
+                val top = parts[0]
+                DistroInstaller.requireName(top)
+                if (alias == null) alias = top
+                require(alias == top) { "backup contains multiple containers" }
+                val rest = parts.drop(1)
+                require(rest[0] == "rootfs" || (rest.size == 1 && rest[0] == "manifest.json")) {
+                    "unexpected backup path: ${entry.name}"
+                }
+                if (rest.size == 1) {
+                    pendingManifest[top] = readEntryBytes(tin, entry.size)
+                } else if (entry.isDirectory) {
+                    safeDest(filesDir, top, rest.drop(1)).mkdirs()
+                } else {
+                    val dest = safeDest(filesDir, top, rest.drop(1))
+                    if (entry.isSymbolicLink) {
+                        dest.parentFile?.mkdirs()
+                        deleteDest(dest)
+                        runCatching {
+                            java.nio.file.Files.createSymbolicLink(dest.toPath(), java.nio.file.Path.of(entry.linkName))
                         }
+                    } else if (entry.isFile) {
+                        dest.parentFile?.mkdirs()
+                        deleteDest(dest)
+                        dest.outputStream().use { out -> tin.copyTo(out) }
                     }
                 }
                 entry = tin.nextEntry
@@ -97,7 +96,9 @@ object DistroBackup {
             throw IOException("backup has no rootfs for '$name'")
         }
         pendingManifest[name]?.let { File(containerDir, "manifest.json").writeBytes(it) }
-        File(containerDir, "shm").mkdirs()
+        ProotArgs.ensureShm(containerDir)
+        ProotArgs.ensureGuestTmp(File(containerDir, "rootfs"))
+        ProotArgs.ensureSysdata(File(containerDir, "rootfs"), containerDir)
         return name
     }
 
@@ -122,15 +123,28 @@ object DistroBackup {
         rootfs.walkTopDown().sortedBy { it.path.length }.forEach { f ->
             if (f == rootfs) return@forEach
             val rel = f.relativeTo(rootfs).invariantSeparatorsPath
+            val isLink = java.nio.file.Files.isSymbolicLink(f.toPath())
+            if (isLink) {
+                // Preserve the link itself (not the target content).
+                val target = runCatching {
+                    java.nio.file.Files.readSymbolicLink(f.toPath()).toString()
+                }.getOrDefault("")
+                val entry = TarArchiveEntry("$prefix/$rel", org.apache.commons.compress.archivers.tar.TarConstants.LF_SYMLINK)
+                entry.linkName = target
+                entry.userId = 0
+                entry.groupId = 0
+                entry.userName = "root"
+                entry.groupName = "root"
+                tar.putArchiveEntry(entry)
+                tar.closeArchiveEntry()
+                return@forEach
+            }
             val entry = TarArchiveEntry(f, "$prefix/$rel")
             entry.userId = 0
             entry.groupId = 0
             entry.userName = "root"
             entry.groupName = "root"
-            if (f.isDirectory && !java.nio.file.Files.isSymbolicLink(f.toPath())) {
-                tar.putArchiveEntry(entry)
-                tar.closeArchiveEntry()
-            } else if (java.nio.file.Files.isSymbolicLink(f.toPath())) {
+            if (f.isDirectory) {
                 tar.putArchiveEntry(entry)
                 tar.closeArchiveEntry()
             } else if (f.isFile) {
@@ -165,5 +179,15 @@ object DistroBackup {
         val parent = (cur.parentFile ?: root).canonicalFile
         require(parent == root || parent.startsWith(root)) { "backup escapes rootfs" }
         return cur
+    }
+
+    /** Remove whatever sits at [dest] (link, file, or dir tree) before restore. */
+    private fun deleteDest(dest: File) {
+        if (!dest.exists() && !java.nio.file.Files.isSymbolicLink(dest.toPath())) return
+        if (java.nio.file.Files.isSymbolicLink(dest.toPath()) || dest.isFile) {
+            dest.delete()
+            return
+        }
+        dest.deleteRecursively()
     }
 }

@@ -102,37 +102,83 @@ object LayerExtractor {
         }
         val dest = sanitize(rootfs, rel) ?: return
         when {
-            entry.isDirectory -> dest.toFile().mkdirs()
+            entry.isDirectory -> {
+                dest.toFile().mkdirs()
+                applyMode(dest.toFile(), entry.mode)
+            }
             entry.isSymbolicLink -> {
+                // Dangling links are legal (target often appears in a later layer/
+                // entry); NIO creates them fine. Delete-then-create with one retry
+                // so a pre-existing dir/file never blocks the link.
                 deleteTree(dest.toFile())
                 dest.parent?.toFile()?.mkdirs()
-                try {
-                    Files.createSymbolicLink(dest, Path.of(entry.linkName))
-                } catch (_: Exception) {
-                    // dangling or unsupported: leave absent rather than fail the layer
+                val linkName = entry.linkName
+                var created = runCatching {
+                    Files.createSymbolicLink(dest, Path.of(linkName))
+                    true
+                }.getOrDefault(false)
+                if (!created) {
+                    deleteTree(dest.toFile())
+                    created = runCatching {
+                        Files.createSymbolicLink(dest, Path.of(linkName))
+                        true
+                    }.getOrDefault(false)
+                }
+                if (!created && linkName.isEmpty()) {
+                    // Empty link target: nothing sane to create; skip.
                 }
             }
             entry.isLink -> {
                 deleteTree(dest.toFile())
                 dest.parent?.toFile()?.mkdirs()
-                val linkTarget = sanitize(rootfs, entry.linkName.trimStart('/')) ?: return
-                try {
+                // Hardlink targets: absolute targets resolve under rootfs;
+                // relative targets resolve against the entry's own directory
+                // (tar semantics), then must still land inside rootfs.
+                val rawTarget = entry.linkName
+                val linkTarget: Path = if (rawTarget.startsWith("/")) {
+                    sanitize(rootfs, rawTarget.trimStart('/'))
+                } else {
+                    val siblingRel = if (rel.contains("/")) {
+                        rel.substringBeforeLast("/") + "/" + rawTarget
+                    } else {
+                        rawTarget
+                    }
+                    sanitize(rootfs, siblingRel)
+                } ?: return
+                val linked = runCatching {
                     Files.createLink(dest, linkTarget)
-                } catch (_: Exception) {
-                    if (linkTarget.toFile().isFile) {
-                        Files.copy(linkTarget, dest, StandardCopyOption.REPLACE_EXISTING)
+                    true
+                }.getOrDefault(false)
+                if (!linked) {
+                    // Cross-device or missing target: fall back to a file copy.
+                    runCatching {
+                        if (linkTarget.toFile().isFile) {
+                            dest.parent?.toFile()?.mkdirs()
+                            Files.copy(linkTarget, dest, StandardCopyOption.REPLACE_EXISTING)
+                        }
                     }
                 }
             }
             entry.isFile || !entry.isBlockDevice && !entry.isCharacterDevice && !entry.isFIFO -> {
                 dest.parent?.toFile()?.mkdirs()
+                // If a dir/symlink sits where the file goes, remove it first.
+                val f = dest.toFile()
+                if (f.isDirectory && dest?.let { Files.isSymbolicLink(it) } != true) deleteTree(f)
+                else if (dest?.let { Files.isSymbolicLink(it) } == true || f.isFile) f.delete()
                 Files.copy(tin, dest, StandardCopyOption.REPLACE_EXISTING)
-                try {
-                    if (entry.mode and 0b001_000_000 != 0) dest.toFile().setExecutable(true)
-                } catch (_: Exception) {
-                }
+                applyMode(dest.toFile(), entry.mode)
             }
             else -> { /* skip device nodes, fifos, sockets */ }
+        }
+    }
+
+    /** Apply tar mode bits: any exec bit -> owner+group/other exec; preserve rw. */
+    private fun applyMode(file: File, mode: Int) {
+        try {
+            if (mode and 0b001_001_001 != 0) file.setExecutable(true, false)
+            if (mode and 0b100_100_100 != 0) file.setReadable(true, false)
+            if (mode and 0b010_010_010 != 0) file.setWritable(true, true)
+        } catch (_: Exception) {
         }
     }
 

@@ -34,19 +34,67 @@ class ProotArgsTest {
     }
 
     @Test
-    fun `isolated mode skips extra binds`() {
+    fun `isolated mode skips host binds but keeps explicit binds`() {
+        // Mirrors proot-distro: --isolated drops storage/system/prefix bridges,
+        // but user-supplied --bind entries are always honoured.
         val (filesDir, prootBin) = setup().let { Triple(it.first, it.second, it.third) }
         val opts = ProotArgs.LoginOptions(
             extraBinds = listOf("/x" to "/y"),
             isolated = true,
         )
         val argv = ProotArgs.build(prootBin, filesDir, "u", listOf("true"), opts)
-        assertFalse(argv.any { it == "--bind=/x:/y" })
+        assertTrue(argv.any { it == "--bind=/x:/y" })
+        assertFalse(argv.any { it == "--bind=/storage" })
+        assertFalse(argv.any { it.startsWith("--bind=" + java.io.File(filesDir, "usr").absolutePath) })
         val full = ProotArgs.build(
             prootBin, filesDir, "u", listOf("true"),
             opts.copy(isolated = false),
         )
         assertTrue(full.any { it == "--bind=/x:/y" })
+    }
+
+    @Test
+    fun `kernel release uses backslash tuple`() {
+        val arg = ProotArgs.kernelReleaseArg("myhost", "6.17.0-PRoot-Distro", CpuArch.AARCH64)
+        assertTrue(arg.startsWith("--kernel-release="))
+        assertTrue("\\Linux\\myhost\\6.17.0-PRoot-Distro\\" in arg)
+        assertTrue(" " !in arg)
+        assertTrue("aarch64" in arg)
+        assertEquals("armv7l", ProotArgs.unameM(CpuArch.ARM))
+    }
+
+    @Test
+    fun `resolveShell prefers passwd shell then sh`() {
+        val rootfs = tmp.newFolder("rootfs-shell")
+        java.io.File(rootfs, "bin").mkdirs()
+        java.io.File(rootfs, "bin/sh").createNewFile()
+        java.io.File(rootfs, "bin/bash").createNewFile()
+        // No passwd -> first fallback that exists.
+        assertEquals("/bin/sh", ProotArgs.resolveShell(rootfs))
+        // Passwd pointing at bash wins when present.
+        java.io.File(rootfs, "etc").mkdirs()
+        java.io.File(rootfs, "etc/passwd").writeText("root:x:0:0::/root:/bin/bash\n")
+        assertEquals("/bin/bash", ProotArgs.resolveShell(rootfs))
+        // Passwd pointing at a missing shell falls back to sh.
+        java.io.File(rootfs, "etc/passwd").writeText("root:x:0:0::/root:/bin/zsh\n")
+        assertEquals("/bin/sh", ProotArgs.resolveShell(rootfs))
+    }
+
+    @Test
+    fun `image env blocked vars are filtered`() {
+        val env = ProotArgs.guestEnv(
+            imageEnv = listOf(
+                "MYAPP=1",
+                "TERM=evil",
+                "LD_LIBRARY_PATH=/evil",
+                "PROOT_L2S_DIR=/evil",
+                "PULSE_SERVER=evil",
+            ),
+        )
+        assertEquals("1", env["MYAPP"])
+        assertEquals("xterm-256color", env["TERM"])
+        assertEquals("127.0.0.1", env["PULSE_SERVER"])
+        assertFalse(env["LD_LIBRARY_PATH"] == "/evil")
     }
 
     @Test

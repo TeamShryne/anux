@@ -38,6 +38,8 @@ android {
     kotlinOptions { jvmTarget = "17" }
 
     buildFeatures { compose = true }
+    // Proot must not be deflated in the APK: openFd size-check needs it stored.
+    androidResources { noCompress += listOf("proot", "libtalloc.so.2", "libandroid-shmem.so") }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 

@@ -26,4 +26,33 @@ object ContainerLock {
             }
         }
     }
+
+    /** Suspending variant for coroutine install flows (blocking lock, call on IO). */
+    suspend fun <T> withLockSuspend(
+        filesDir: File,
+        alias: String,
+        exclusive: Boolean,
+        block: suspend () -> T,
+    ): T {
+        val lockFile = File(filesDir, "containers/$alias.lock")
+        lockFile.parentFile?.mkdirs()
+        RandomAccessFile(lockFile, "rw").use { raf ->
+            val channel: FileChannel = raf.channel
+            // Caller must be on Dispatchers.IO (DistroInstaller.install is):
+            // FileLock.lock() blocks.
+            val lock: FileLock = if (exclusive) {
+                channel.lock()
+            } else {
+                channel.lock(0L, Long.MAX_VALUE, true)
+            }
+            try {
+                return block()
+            } finally {
+                try {
+                    lock.release()
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
 }
