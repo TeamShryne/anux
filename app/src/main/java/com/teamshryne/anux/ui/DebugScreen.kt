@@ -30,6 +30,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.teamshryne.anux.BuildConfig
 import com.teamshryne.anux.bootstrap.BootstrapManager
 import com.teamshryne.anux.debug.CheckResult
 import com.teamshryne.anux.debug.SessionDiagnostics
@@ -117,6 +118,11 @@ fun DebugScreen(service: AnuxService?, filesDir: File) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Debug logs", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            "build ${BuildConfig.VERSION_NAME} git ${BuildConfig.GIT_SHA}",
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+        )
         Text(
             "When a session dies instantly, the cause is here: checks, argv and logs.",
             style = MaterialTheme.typography.bodyMedium,
@@ -238,7 +244,7 @@ private fun buildReport(
     finished: List<String>,
     logs: String,
 ): String = buildString {
-    appendLine("anux debug report for '$alias'")
+    appendLine("anux ${BuildConfig.VERSION_NAME} git ${BuildConfig.GIT_SHA} debug report for '$alias'")
     appendLine("--- checks ---")
     checks?.forEach { appendLine("${if (it.ok) "OK" else "FAIL"} ${it.name}: ${it.detail}") }
         ?: appendLine("(checks not run)")

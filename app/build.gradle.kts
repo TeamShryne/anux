@@ -20,6 +20,11 @@ android {
         // on-device while Termux (target 28) is unaffected. Do NOT raise
         // without re-verifying proot launch on a real device.
         targetSdk = 28
+        // Baked into the Debug report header so pasted reports self-identify.
+        val gitSha = providers.exec {
+            commandLine("git", "rev-parse", "--short", "HEAD")
+        }.standardOutput.asText.get().trim().ifEmpty { "nogit" }
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
         versionCode = 1
         versionName = "0.1.0"
         vectorDrawables { useSupportLibrary = true }
@@ -42,7 +47,10 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     // Proot must not be deflated in the APK: openFd size-check needs it stored.
     androidResources { noCompress += listOf("proot", "libtalloc.so.2", "libandroid-shmem.so") }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
